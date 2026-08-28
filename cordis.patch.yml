@@ -1,0 +1,4 @@
+# dsh-session-recap bundle patch：挂载 host 插件（id 与包名一致，配置走默认值）。
+- insert:
+    - id: dsh-session-recap
+      name: '@dsh-external/dsh-session-recap'
