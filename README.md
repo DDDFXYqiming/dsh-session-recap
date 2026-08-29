@@ -1,90 +1,97 @@
-# DSH Session Recap
+简体中文 | [English](README.en.md)
 
-Claude Code-style **Session recap / Away summary** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+# @dsh-external/dsh-session-recap
 
-After a completed turn has been idle for the configured interval, the host makes one bounded auxiliary LLM call and produces a short summary of the session's overall goal, current task, and next action. The summary appears above the conversation composer when the Web tab is visible. Sending a new message or dismissing the banner hides that recap.
+**DeepSeek Harness（DSH）会话回顾插件** —— 在会话空闲后生成 Claude Code 风格的 Away Summary，概括当前会话已完成内容、当前状态和下一步。
 
-## Features
+## 能力
 
-- Automatic recap after an idle window, with a minimum completed-turn threshold.
-- Manual `/recap` command.
-- Claude-style concise output with configurable text, input, token, and time limits.
-- Banner is scoped to the current session and turn; it survives session switching and browser remounts without resurfacing a dismissed recap.
-- Hidden tabs defer display until they become visible.
-- English and Simplified Chinese UI labels.
-- Host-side sidecar persistence; no plugin-owned events are appended to the DSH session log.
+- 会话完成一段时间后自动生成回顾，并支持最少完成轮数配置。
+- `/recap` 手动生成当前会话回顾。
+- 回顾以短文本横幅显示在 Web 对话输入框上方。
+- 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回不会重新出现。
+- 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
+- 中英文界面标签，支持固定 provider/model 或复用当前会话最近路由。
+- 回顾状态写入插件 sidecar，不向 DSH append-only session log 添加插件自定义事件。
 
-## Install
+## 工作方式
 
-The bundle patch is included in the package, so installing the plugin into a profile activates the host and Web halves together.
+1. 插件监听已完成的 `turn/end`，等待配置的空闲窗口，并只取最近的派生会话消息。
+2. 通过一次有输入、输出和超时上限的辅助 LLM 请求，生成简短的目标 / 进展 / 下一步回顾。
+3. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求结果不会提交。
+4. 结果保存在本地 sidecar，由 loopback、同源 Web route 提供给客户端；会话前进后旧 snapshot 自动失效。
 
-### From a local checkout
+## 安装
 
 ```bash
-dsh plugin --profile web add file:/absolute/path/to/dsh-session-recap
+# GitHub 安装（推荐）
+dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-### From GitHub
+本地开发：
 
 ```bash
 git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
-dsh plugin --profile web add file:/absolute/path/to/dsh-session-recap
+cd dsh-session-recap
+npm install && npm run build
+dsh plugin --profile web add <本目录绝对路径>
 ```
 
-Restart the DSH Web profile after a persistent installation, then refresh the browser page. The plugin can also be installed from the `.tgz` asset attached to a GitHub release.
+插件自带 `cordis.patch.yml`，安装后会自动加入 `dsh-session-recap` bundle 条目。首次安装后重启 Web profile，再刷新页面。
 
-## Configuration
+## 配置
 
-Override the bundle entry in the profile's `cordis.patch.yml`:
+bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目：
 
 ```yaml
-- insert:
-    - id: dsh-session-recap
-      name: '@dsh-external/dsh-session-recap'
-      config:
-        enabled: true
-        idleMs: 180000       # idle window in milliseconds
-        minTurns: 3          # minimum completed turns
-        recentMessages: 30   # recent derived messages sent to the recap call
-        maxChars: 400         # recap text limit
-        maxInputChars: 24000 # transcript byte limit
-        maxOutputTokens: 512
-        timeoutMs: 30000
-        provider: ''         # empty: reuse the session's latest route
-        model: ''            # set provider and model together for a fixed route
+- id: dsh-session-recap
+  config:
+    enabled: true
+    idleMs: 180000       # 空闲窗口（毫秒）
+    minTurns: 3          # 自动回顾所需的最少完成轮数
+    recentMessages: 30   # 发送给回顾请求的最近派生消息数
+    maxChars: 400        # 回顾文本上限
+    maxInputChars: 24000 # 回顾输入上限（字节）
+    maxOutputTokens: 512
+    timeoutMs: 30000
+    provider: ''         # 留空：复用会话最近 provider
+    model: ''            # 留空：复用会话最近 model；固定路由时与 provider 一起填写
 ```
 
-An explicit `provider` and `model` must be supplied as a pair; leaving both empty reuses the latest route recorded by the session.
+`provider` 与 `model` 必须成对填写；同时留空时复用会话最近一次请求的路由。
 
-## How it works
-
-The host watches completed `turn/end` events and cancels an idle timer when a newer turn or session disposal occurs. A recap generation is committed only if the session is still idle and anchored to the same turn when the call finishes.
-
-The result is stored in:
+## 存储布局
 
 ```text
-~/.dsh/plugin-data/dsh-session-recap/<session-id>.json
+<home>/.dsh/plugin-data/dsh-session-recap/
+└── <encoded-session-id>.json
 ```
 
-The Web client reads the current snapshot through a loopback, same-origin route and polls while the conversation dock is mounted. A stale snapshot is discarded when the session advances. This sidecar design keeps recap state across host restarts while avoiding unsupported custom durable session events.
+sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。它不改变 DSH session log 的事件词汇，旧回顾在会话前进后会被清理。
 
-## Development
+## 兼容性
+
+- DeepSeek Harness packages：`>=0.1.1-rc.2 <1`
+- Node.js：`^22.19.0 || >=24.0.0`（与 DSH 当前运行时范围一致）
+- 使用面：DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务
+
+## 开发与验证
 
 ```bash
 npm install
 npm run typecheck
 npm run build
+npm run build:client
 npm pack
 ```
 
-The build helper uses local dependencies first. When developing against a DSH checkout, set `DSH_CHECKOUT` to its root; alternatively set `DSH_GLOBAL_NODE_MODULES` to a compatible global `node_modules` directory. Only missing build links are created, and existing packages are left untouched.
+构建脚本优先使用本地依赖；针对 DSH checkout 开发时可设置 `DSH_CHECKOUT`，或设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。只补建缺失链接，不替换已有包。
 
-## Compatibility
+## 相关
 
-- DeepSeek Harness packages: `0.1.1-rc.2` or newer within the current major line.
-- Web profile with the client modules, locale, conversation, slots, session, commands, LLM, and host web-server services.
-- Node.js 18 or newer.
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
-## License
+## 授权
 
-[MIT](LICENSE)
+MIT
