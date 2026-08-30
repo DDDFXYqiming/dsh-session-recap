@@ -36,6 +36,12 @@ export interface Config {
     /** Optional fixed route; both provider and model must be set together. */
     provider: string;
     model: string;
+    /** Optional adapter-owned reasoning effort; empty means do not pass one. */
+    reasoningEffort: string;
+    /** Optional sampling temperature; absent means use the adapter default. */
+    temperature?: number;
+    /** Optional stop sequences passed to the recap model. */
+    stopSequences: string[];
 }
 export declare const Config: z<Schemastery.ObjectS<{
     enabled: z<boolean, boolean>;
@@ -48,6 +54,9 @@ export declare const Config: z<Schemastery.ObjectS<{
     timeoutMs: z<number, number>;
     provider: z<string, string>;
     model: z<string, string>;
+    reasoningEffort: z<string, string>;
+    temperature: z<number, number>;
+    stopSequences: z<string[], string[]>;
 }>, Schemastery.ObjectT<{
     enabled: z<boolean, boolean>;
     idleMs: z<number, number>;
@@ -59,6 +68,9 @@ export declare const Config: z<Schemastery.ObjectS<{
     timeoutMs: z<number, number>;
     provider: z<string, string>;
     model: z<string, string>;
+    reasoningEffort: z<string, string>;
+    temperature: z<number, number>;
+    stopSequences: z<string[], string[]>;
 }>>;
 type AppContext = Context & {
     llm: LlmService;

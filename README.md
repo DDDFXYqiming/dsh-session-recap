@@ -12,7 +12,7 @@
 - 自动回顾以带“回顾 / Recap”标题和关闭按钮的卡片显示在 Web 对话输入框上方，最长 400 字符。
 - 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回不会重新出现。
 - 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
-- 中英文界面标签，支持固定 provider/model 或复用当前会话最近路由。
+- 中英文界面标签；默认复用当前会话最近实际使用的 provider/model，也可覆盖模型、思考等级、temperature、输出预算、停止词和超时等参数。
 - 回顾状态写入插件 sidecar，不向 DSH append-only session log 添加插件自定义事件。
 
 ## 工作方式
@@ -54,13 +54,16 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     recentMessages: 30   # 发送给回顾请求的最近派生消息数
     maxChars: 400        # 回顾文本上限
     maxInputChars: 24000 # 回顾输入上限（字节）
-    maxOutputTokens: 512
+    maxOutputTokens: 512 # 回顾模型的输出 token 预算
     timeoutMs: 30000
-    provider: ''         # 留空：复用会话最近 provider
-    model: ''            # 留空：复用会话最近 model；固定路由时与 provider 一起填写
+    provider: ''         # 留空：复用会话最近实际使用的 provider
+    model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
+    reasoningEffort: ''  # 留空：插件不传思考等级；也可填写目标适配器支持的 id
+    # temperature: 0.2   # 可选；省略时使用目标模型/适配器默认值
+    stopSequences: []    # 可选停止词列表
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时复用会话最近一次请求的路由。
+`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由。默认不会继承或传递会话的 `reasoningEffort`；目标模型适配器仍可应用自己的默认值。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
 ## 存储布局
 

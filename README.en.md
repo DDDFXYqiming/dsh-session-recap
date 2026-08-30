@@ -12,7 +12,7 @@
 - Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
-- Includes English and Simplified Chinese UI labels, with optional fixed provider/model routing or reuse of the session's latest route.
+- Includes English and Simplified Chinese UI labels; reuses the session's latest effective provider/model by default, with optional overrides for model, reasoning effort, temperature, output budget, stop sequences, and timeout.
 - Stores recap state in a plugin sidecar instead of adding plugin-defined events to the DSH append-only session log.
 
 ## How it works
@@ -54,13 +54,16 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     recentMessages: 30   # recent derived messages sent to the recap request
     maxChars: 400        # recap text limit
     maxInputChars: 24000 # recap input limit in bytes
-    maxOutputTokens: 512
+    maxOutputTokens: 512 # recap-model output token budget
     timeoutMs: 30000
-    provider: ''         # empty: reuse the session's latest provider
-    model: ''            # empty: reuse the session's latest model; set with provider for a fixed route
+    provider: ''         # empty: reuse the session's latest effective provider
+    model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
+    reasoningEffort: ''  # empty: the plugin sends no effort; otherwise use an id supported by the target adapter
+    # temperature: 0.2   # optional; omit to use the target model/adapter default
+    stopSequences: []    # optional stop-sequence list
 ```
 
-`provider` and `model` must be supplied together. Leaving both empty reuses the route from the session's latest request.
+`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
 
 ## Storage layout
 

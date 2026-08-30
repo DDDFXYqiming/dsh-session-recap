@@ -13,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type LlmService from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
-import { BlockAssembler, createUserMessage, deepFreeze } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createUserMessage, deepFreeze, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type WebServer from '@deepseek-ai/dsh-host-webserver'
@@ -49,6 +49,12 @@ export interface Config {
   /** Optional fixed route; both provider and model must be set together. */
   provider: string
   model: string
+  /** Optional adapter-owned reasoning effort; empty means do not pass one. */
+  reasoningEffort: string
+  /** Optional sampling temperature; absent means use the adapter default. */
+  temperature?: number
+  /** Optional stop sequences passed to the recap model. */
+  stopSequences: string[]
 }
 
 export const Config = z.object({
@@ -58,10 +64,13 @@ export const Config = z.object({
   recentMessages: z.number().step(1).min(1).max(200).default(30),
   maxChars: z.number().step(1).min(80).max(400).default(400),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
-  maxOutputTokens: z.number().step(1).min(16).max(4096).default(512),
-  timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000),
-  provider: z.string().default(''),
-  model: z.string().default(''),
+  maxOutputTokens: z.number().step(1).min(16).max(4096).default(512).description('Recap-model output token budget.'),
+  timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
+  provider: z.string().default('').description('Optional fixed provider; set together with model. Empty reuses the session route.'),
+  model: z.string().default('').description('Optional fixed model; set together with provider. Empty reuses the session route.'),
+  reasoningEffort: z.string().default('').description('Optional adapter-owned effort id. Empty sends no reasoningEffort.'),
+  temperature: z.number().min(0).max(2).description('Optional sampling temperature. Omit to use the adapter default.'),
+  stopSequences: z.array(z.string().min(1).max(200)).default([]).description('Optional stop sequences passed to the recap model.'),
 })
 
 /** Capability-owned timeout reason code for auxiliary recap requests. */
@@ -226,6 +235,9 @@ async function streamRecapOnce(
     const options = deepFreeze({
       provider: route.provider,
       model: route.model,
+      ...(config.reasoningEffort === '' ? {} : { reasoningEffort: ReasoningEffortId(config.reasoningEffort) }),
+      ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+      ...(config.stopSequences.length === 0 ? {} : { stop: config.stopSequences }),
       messages,
       system,
       maxTokens: config.maxOutputTokens,
