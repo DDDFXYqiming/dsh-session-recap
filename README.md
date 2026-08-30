@@ -2,15 +2,19 @@
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件** —— 当你切走会话或让 Web 窗口失焦后，在后台生成 Claude Code 风格的 Away Summary，返回时用简短回顾概括整体目标、当前任务和下一步。
+**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份 Claude Code 风格的 Away Summary。等你回来，一张简短的卡片会概括那个会话的整体目标、当前任务和下一步。
+
+## 为什么需要它
+
+人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。Claude Code 的 Away Summary 就是给这种时刻准备的，离开一段时间后回来，先读一段短回顾，再决定从哪里继续。这个插件把同样的行为带进 DSH Web。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
 
 ## 能力
 
-- 仅在 Web 窗口失焦或切走当前会话时后台生成；窗口保持聚焦时不会因单纯空闲而调用模型。
-- 默认要求最后一个完成 turn 已过去 3 分钟且会话至少有 3 个完成 turn，同一 turn 不会连续生成两次。
+- 仅在 Web 窗口失焦或切走当前会话时后台生成；窗口保持聚焦时，单纯空闲不会调用模型。
+- 默认要求最后一个完成 turn 已过去 3 分钟，且会话至少有 3 个完成 turn，同一 turn 不会连续生成两次。这两道门槛挡住了短暂分心带来的无意义回顾。
 - `/recap` 随时按需生成，并在同一张回顾卡片中显示；关闭自动回顾不影响手动命令。
 - 自动回顾以带“回顾 / Recap”标题和关闭按钮的卡片显示在 Web 对话输入框上方，最长 400 字符。
-- 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回不会重新出现。
+- 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回，横幅不会重新出现。
 - 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
 - 中英文界面标签；默认复用当前会话最近实际使用的 provider/model，也可覆盖模型、思考等级、temperature、输出预算、停止词和超时等参数。
 - 回顾状态写入插件 sidecar，不向 DSH append-only session log 添加插件自定义事件。
@@ -18,9 +22,9 @@
 ## 工作方式
 
 1. Web client 把窗口 focus/blur、页面可见性和会话切换映射为当前会话的 `active` / `away` 状态。
-2. Host 只在会话处于 `away`、最后一个完成 `turn/end` 已超过 `idleMs`、完成轮数达到 `minTurns` 时启动自动回顾。
-3. 插件从最近的派生会话消息构造有界输入，通过一次独立辅助 LLM 请求生成不超过 40 词、1–2 个纯文本句子的目标 / 进展 / 下一步回顾。
-4. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求结果不会提交。
+2. Host 只在会话处于 `away`、最后一个完成 `turn/end` 已超过 `idleMs`、完成轮数达到 `minTurns` 时启动自动回顾。三个条件同时满足才发起请求，短暂分心不会触发。
+3. 插件从最近的派生消息构造有界输入，通过一次独立辅助 LLM 请求生成不超过 40 词、一到两句的纯文本回顾，内容是目标、进展和下一步。
+4. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求的结果不会提交。你回来后看到的结果始终和当前进度对得上。
 5. 自动回顾和手动 `/recap` 都把当前结果保存在本地 sidecar，由仅限 loopback 的同源 Web route 提供给卡片；不会向会话消息历史追加摘要正文。
 
 ## 安装
@@ -30,7 +34,7 @@
 dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-本地开发：
+从本地源码安装的方式如下。
 
 ```bash
 git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
@@ -43,7 +47,7 @@ dsh plugin --profile web add <本目录绝对路径>
 
 ## 配置
 
-bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目：
+bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目。
 
 ```yaml
 - id: dsh-session-recap
@@ -63,7 +67,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     stopSequences: []    # 可选停止词列表
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由。默认不会继承或传递会话的 `reasoningEffort`；目标模型适配器仍可应用自己的默认值。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
 ## 存储布局
 
@@ -72,13 +76,15 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
 └── <encoded-session-id>.json
 ```
 
-sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。它不改变 DSH session log 的事件词汇，旧回顾在会话前进后会被清理。
+sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。DSH 的 session log 是 append-only 的，插件不改它的事件词汇，也不往里写自定义事件。旧回顾会被清理。会话前进后，每个会话留下的始终是当前那一份回顾。
 
 ## 兼容性
 
-- DeepSeek Harness packages：`>=0.1.1-rc.2 <1`
-- Node.js：`^22.19.0 || >=24.0.0`（与 DSH 当前运行时范围一致）
-- 使用面：DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务
+| 项目 | 版本或范围 |
+| --- | --- |
+| DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
+| Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
+| 使用面 | DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务 |
 
 ## 开发与验证
 
@@ -90,13 +96,13 @@ npm run build:client
 npm pack
 ```
 
-构建脚本优先使用本地依赖；针对 DSH checkout 开发时可设置 `DSH_CHECKOUT`，或设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。只补建缺失链接，不替换已有包。
+构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。
 
 ## 相关
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Claude Code：Session recap](https://code.claude.com/docs/en/interactive-mode#session-recap)
-- [Claude Code：`/recap` 与 prompt cache](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
+- [Claude Code 的 Session recap 文档](https://code.claude.com/docs/en/interactive-mode#session-recap)
+- [Claude Code 的 `/recap` 与 prompt cache 说明](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## 授权

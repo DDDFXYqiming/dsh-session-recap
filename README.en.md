@@ -2,12 +2,16 @@
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH)** — generates Claude Code-style Away Summaries in the background after you switch sessions or leave the Web window unfocused, then shows a concise goal, current-task, and next-action recap when you return.
+**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a Claude Code-style Away Summary in the background. When you come back, a short card summarizes the session's overall goal, the current task, and the suggested next action.
+
+## Why this plugin exists
+
+People step away from the screen for all sorts of reasons, and the session is still sitting there when they return. The thread of thought is gone, though, and scrolling back through the message history takes a while. Claude Code's Away Summary exists for exactly this moment. You read a short recap first, then decide where to pick up. This plugin brings the same behavior to the DSH Web. A separate auxiliary LLM request produces the recap, and the finished text is never appended to the conversation message history.
 
 ## Capabilities
 
 - Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
-- By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn.
+- By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn. These two gates keep a brief distraction from producing a pointless recap.
 - Provides `/recap` on demand through the same recap card; disabling automatic recaps does not disable the command.
 - Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
@@ -18,9 +22,9 @@
 ## How it works
 
 1. The Web client maps window focus/blur, document visibility, and session switches to `active` / `away` presence for the current session.
-2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied.
-3. The plugin frames recent derived messages into bounded input and makes one independent auxiliary LLM request for an under-40-word, 1–2 sentence plain-text goal / progress / next-step recap.
-4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded.
+2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied. All three conditions must hold before any request goes out, so a brief distraction triggers nothing.
+3. The plugin frames recent derived messages into bounded input and makes one independent auxiliary LLM request for a plain-text goal / progress / next-step recap of at most 40 words in one or two sentences.
+4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded. What you see on return always matches the current progress.
 5. Automatic and manual `/recap` results are stored in a local sidecar and served to the card through a loopback-only, same-origin Web route; recap text is not appended to the conversation message history.
 
 ## Installation
@@ -30,7 +34,7 @@
 dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-From a local checkout:
+To install from a local checkout, run the following.
 
 ```bash
 git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
@@ -43,7 +47,7 @@ The package includes `cordis.patch.yml`, which contributes the `dsh-session-reca
 
 ## Configuration
 
-The bundle supplies the default entry. To override it, use this bare entry in the profile's `cordis.patch.yml`:
+The bundle supplies the default entry. To override it, use this bare entry in the profile's `cordis.patch.yml`.
 
 ```yaml
 - id: dsh-session-recap
@@ -63,7 +67,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     stopSequences: []    # optional stop-sequence list
 ```
 
-`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
+`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
 
 ## Storage layout
 
@@ -72,13 +76,15 @@ The bundle supplies the default entry. To override it, use this bare entry in th
 └── <encoded-session-id>.json
 ```
 
-The sidecar stores the current recap text, generation time, and completed-turn anchor. It does not extend the DSH session-log event vocabulary; stale recaps are removed after the session advances.
+The sidecar stores the current recap text, generation time, and completed-turn anchor. The DSH session log is append-only, and the plugin neither extends its event vocabulary nor writes plugin-defined events into it. Stale recaps are removed after the session advances, so each session keeps only its current recap on disk.
 
 ## Compatibility
 
-- DeepSeek Harness packages: `>=0.1.1-rc.2 <1`
-- Node.js: `^22.19.0 || >=24.0.0` (the current DSH runtime range)
-- Surface: DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services
+| Item | Version or scope |
+| --- | --- |
+| DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
+| Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
+| Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
 
 ## Development and validation
 
@@ -95,8 +101,8 @@ The build helper prefers local dependencies. When developing against a DSH check
 ## Related
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Claude Code: Session recap](https://code.claude.com/docs/en/interactive-mode#session-recap)
-- [Claude Code: `/recap` and prompt caching](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
+- [Claude Code session recap docs](https://code.claude.com/docs/en/interactive-mode#session-recap)
+- [Claude Code `/recap` and prompt caching](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## License
