@@ -2,14 +2,14 @@
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH)** — generates Claude Code-style Away Summaries in the background after you switch sessions or leave the Web window unfocused, then shows a one-line goal, current-task, and next-action recap when you return.
+**A session-recap plugin for DeepSeek Harness (DSH)** — generates Claude Code-style Away Summaries in the background after you switch sessions or leave the Web window unfocused, then shows a concise goal, current-task, and next-action recap when you return.
 
 ## Capabilities
 
 - Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
 - By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn.
 - Provides `/recap` as command output on demand; disabling automatic recaps does not disable the command.
-- Renders automatic output as a `※ recap:` one-line banner above the Web conversation composer, capped at 400 characters.
+- Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
 - Includes English and Simplified Chinese UI labels, with optional fixed provider/model routing or reuse of the session's latest route.

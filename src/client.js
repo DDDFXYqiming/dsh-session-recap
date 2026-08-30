@@ -16,11 +16,12 @@ window.__ModuleLoader__.load({
     var legacyDismissedStoragePrefix = dismissedStoragePrefix
 
     var css = [
-      '.sr-recap-banner{box-sizing:border-box;width:100%;max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));display:flex;align-items:flex-start;gap:7px;margin:0 auto 6px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.25));border-radius:10px;background:var(--dsw-specific-tip,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);box-shadow:var(--dsw-shadow-lv1,none);font-size:13px;line-height:1.5}',
-      '.sr-recap-prefix{flex:none;color:var(--dsw-alias-label-secondary,CanvasText);font-weight:600;white-space:nowrap}',
-      '.sr-recap-text{min-width:0;flex:1;white-space:normal;overflow-wrap:anywhere}',
-      '.sr-recap-close{flex:none;margin-left:auto;border:none;background:transparent;color:var(--dsw-alias-label-tertiary,CanvasText);opacity:.75;cursor:pointer;font-size:14px;line-height:1;padding:3px 5px;border-radius:6px}',
+      '.sr-recap-banner{box-sizing:border-box;width:100%;max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));display:flex;flex-direction:column;gap:6px;margin:0 auto 6px;padding:8px 12px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.25));border-radius:12px;background:var(--dsw-specific-tip,var(--dsw-alias-bg-base,Canvas));color:var(--dsw-alias-label-primary,CanvasText);box-shadow:var(--dsw-shadow-lv1,none);font-size:13px;line-height:1.5}',
+      '.sr-recap-head{display:flex;align-items:center;gap:8px;min-width:0}',
+      '.sr-recap-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover,transparent);color:var(--dsw-alias-label-secondary,CanvasText);font-size:11px;font-weight:600;letter-spacing:.03em}',
+      '.sr-recap-close{margin-left:auto;border:none;background:transparent;color:var(--dsw-alias-label-tertiary,CanvasText);opacity:.75;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:6px}',
       '.sr-recap-close:hover{background:var(--dsw-alias-interactive-bg-hover,transparent);color:var(--dsw-alias-label-primary,CanvasText);opacity:1}',
+      '.sr-recap-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}',
     ].join('\n')
     var styleId = NS + '/recap.css'
     if (typeof document !== 'undefined') {
@@ -205,27 +206,28 @@ window.__ModuleLoader__.load({
       if (!show) return null
       var t = props.t || function (key) { return key }
       return react.createElement('div', { className: 'sr-recap-banner', role: 'note' },
-        react.createElement('span', { className: 'sr-recap-prefix' }, t('prefix')),
-        react.createElement('span', { className: 'sr-recap-text' }, text),
-        react.createElement('button', {
-          type: 'button',
-          className: 'sr-recap-close',
-          'aria-label': t('dismiss'),
-          title: t('close'),
-          onClick: function () {
-            rememberDismissed(sessionId, turnSeq)
-            setDismissedKey(currentKey)
-          },
-        }, '\u2715'))
+        react.createElement('div', { className: 'sr-recap-head' },
+          react.createElement('span', { className: 'sr-recap-badge' }, t('badge')),
+          react.createElement('button', {
+            type: 'button',
+            className: 'sr-recap-close',
+            'aria-label': t('dismiss'),
+            title: t('close'),
+            onClick: function () {
+              rememberDismissed(sessionId, turnSeq)
+              setDismissedKey(currentKey)
+            },
+          }, '\u2715')),
+        react.createElement('div', { className: 'sr-recap-text' }, text))
     }
 
     var en = {
-      prefix: '\u203b recap:',
+      badge: 'Recap',
       dismiss: 'Dismiss session recap',
       close: 'Dismiss',
     }
     var zh = {
-      prefix: '\u203b 回顾：',
+      badge: '回顾',
       dismiss: '关闭会话回顾',
       close: '关闭',
     }
