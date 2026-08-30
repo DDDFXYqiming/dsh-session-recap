@@ -8,7 +8,7 @@
 
 - Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
 - By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn.
-- Provides `/recap` as command output on demand; disabling automatic recaps does not disable the command.
+- Provides `/recap` on demand through the same recap card; disabling automatic recaps does not disable the command.
 - Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
@@ -21,7 +21,7 @@
 2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied.
 3. The plugin frames recent derived messages into bounded input and makes one independent auxiliary LLM request for an under-40-word, 1–2 sentence plain-text goal / progress / next-step recap.
 4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded.
-5. Automatic output is stored in a local sidecar and served through a loopback-only, same-origin Web route. Manual `/recap` appends command output without replacing message history.
+5. Automatic and manual `/recap` results are stored in a local sidecar and served to the card through a loopback-only, same-origin Web route; recap text is not appended to the conversation message history.
 
 ## Installation
 

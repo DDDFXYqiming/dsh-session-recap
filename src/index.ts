@@ -580,8 +580,8 @@ export function apply(ctx: AppContext, config: Config): void {
     store.values.clear()
   })
 
-  // Manual `/recap` is command output only: it does not replace history or
-  // create the automatic-return banner, so prompt-cache history stays intact.
+  // Manual `/recap` publishes through the same sidecar-backed card as automatic
+  // recaps. The command result itself stays textless, avoiding a duplicate row.
   ctx.inject(['commands'], (commandCtx) => {
     const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
     commandsCtx.commands.register({
@@ -607,7 +607,8 @@ export function apply(ctx: AppContext, config: Config): void {
           if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
             return { kind: 'error' as const, text: 'Recap failed: the session changed while generating; run /recap again' }
           }
-          return { kind: 'success' as const, text }
+          publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)
+          return { kind: 'success' as const }
         } catch (error) {
           return { kind: 'error' as const, text: `Recap failed: ${error instanceof Error ? error.message : String(error)}` }
         } finally {
