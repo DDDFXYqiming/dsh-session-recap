@@ -1,12 +1,12 @@
 /**
  * dsh-session-recap — Claude Code-style session recap for DeepSeek Harness.
  *
- * Host half: watches `session/event` for completed turns; after a configurable
- * idle window, one bounded auxiliary LLM call distills the recent conversation
- * into a short recap. The result is kept in a plugin-owned sidecar rather than
- * the append-only session log, because the current DSH release has no public
- * way for out-of-tree plugins to mark custom events ignorable. A same-origin
- * read-only Web route carries the current snapshot to the client banner.
+ * Host half: watches completed turns and Web focus/session presence. Once the
+ * last completed turn is old enough and the user is genuinely away, one bounded
+ * auxiliary LLM call distills the recent conversation into a short recap. The
+ * result is kept in a plugin-owned sidecar rather than the append-only session
+ * log, because the current DSH release has no public custom-event registration
+ * surface. A same-origin Web route carries presence and the current snapshot.
  *
  * @module @dsh-external/dsh-session-recap
  */
@@ -30,9 +30,9 @@ export const name = '@dsh-external/dsh-session-recap'
 export const inject = ['llm']
 
 export interface Config {
-  /** Master toggle. */
+  /** Automatic recap toggle; manual `/recap` remains available. */
   enabled: boolean
-  /** Idle window after a completed turn before auto-generating a recap (ms). */
+  /** Away window after a completed turn before auto-generating a recap (ms). */
   idleMs: number
   /** Minimum completed turns before any automatic recap is generated. */
   minTurns: number
@@ -56,7 +56,7 @@ export const Config = z.object({
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
   minTurns: z.number().step(1).min(1).max(1000).default(3),
   recentMessages: z.number().step(1).min(1).max(200).default(30),
-  maxChars: z.number().step(1).min(80).max(2000).default(400),
+  maxChars: z.number().step(1).min(80).max(400).default(400),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
   maxOutputTokens: z.number().step(1).min(16).max(4096).default(512),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000),
@@ -69,7 +69,7 @@ const RECAP_TIMEOUT_CODE = 'SESSION_RECAP_TIMEOUT'
 /** Route used by the Web client to read the in-memory/sidecar snapshot. */
 const RECAP_ROUTE = '/api/dsh-session-recap'
 /** Maximum accepted size of one sidecar snapshot. */
-const MAX_STORED_RECAP_CHARS = 2000
+const MAX_STORED_RECAP_CHARS = 400
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 const LOOPBACK_ORIGIN = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 
@@ -84,7 +84,6 @@ type WebContext = AppContext & {
 
 type RecapStore = {
   directory: string
-  enabled: boolean
   values: Map<string, RecapProjection | null>
 }
 
@@ -268,7 +267,6 @@ async function generateRecap(
   session: Session,
   signal: AbortSignal,
 ): Promise<string> {
-  if (!config.enabled) throw new Error('dsh-session-recap: plugin is disabled')
   const route = resolveRoute(config, session)
   const derived = session.deriveMessages()
   if (derived.length === 0) throw new Error('dsh-session-recap: no conversation messages are available')
@@ -379,13 +377,19 @@ function sendJson(res: ServerResponse, status: number, body: RecapResponse | { e
 }
 
 function allowedLoopbackRequest(req: IncomingMessage): boolean {
+  const remote = String(req.socket.remoteAddress ?? '').toLowerCase()
+  if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') return false
   const host = String(req.headers.host ?? '').toLowerCase()
   if (!LOOPBACK_HOST.test(host)) return false
   const origin = String(req.headers.origin ?? '').toLowerCase()
   return origin === '' || LOOPBACK_ORIGIN.test(origin)
 }
 
-function mountWebRoute(webCtx: WebContext, store: RecapStore): void {
+function mountWebRoute(
+  webCtx: WebContext,
+  store: RecapStore,
+  setAway: (session: Session, away: boolean) => void,
+): void {
   webCtx.effect(() => {
     const dispose = webCtx.webServer.register({
       kind: 'exact',
@@ -393,8 +397,8 @@ function mountWebRoute(webCtx: WebContext, store: RecapStore): void {
       handler: async (req, res) => {
         if (!allowedLoopbackRequest(req)) return sendJson(res, 403, { error: 'forbidden origin' })
         const method = String(req.method ?? 'GET').toUpperCase()
-        if (method !== 'GET' && method !== 'HEAD') {
-          res.writeHead(405, { Allow: 'GET' })
+        if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
+          res.writeHead(405, { Allow: 'GET, HEAD, POST' })
           res.end()
           return
         }
@@ -404,7 +408,18 @@ function mountWebRoute(webCtx: WebContext, store: RecapStore): void {
           return sendJson(res, 400, { error: 'sessionId is required' })
         }
         const session = webCtx.sessions.get(rawSessionId as Session['id'])
-        const body: RecapResponse = { recap: !store.enabled || session === undefined ? null : currentRecap(store, session) }
+        if (method === 'POST') {
+          if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
+          const presence = url.searchParams.get('presence')
+          if (presence !== 'active' && presence !== 'away') {
+            return sendJson(res, 400, { error: 'presence must be active or away' })
+          }
+          setAway(session, presence === 'away')
+          res.writeHead(204, { 'Cache-Control': 'no-store' })
+          res.end()
+          return
+        }
+        const body: RecapResponse = { recap: session === undefined ? null : currentRecap(store, session) }
         if (method === 'HEAD') {
           res.writeHead(200, {
             'Content-Type': 'application/json; charset=utf-8',
@@ -439,7 +454,12 @@ function endCall(sessionId: string, controller: AbortController, activeCalls: Se
 }
 
 function cancelCall(sessionId: string, activeBySession: Map<string, AbortController>): void {
-  activeBySession.get(sessionId)?.abort()
+  const controller = activeBySession.get(sessionId)
+  if (controller === undefined) return
+  // Release the per-session slot before aborting so a newer completed turn can
+  // start its recap even while the old provider stream is still unwinding.
+  activeBySession.delete(sessionId)
+  controller.abort()
 }
 
 /** Generate (if conditions hold) and publish a sidecar recap. */
@@ -468,7 +488,9 @@ async function maybeGenerate(
     publishRecap(ctx, store, session, text, anchor.seq)
     ctx.logger?.info?.('dsh-session-recap: generated recap for %s (turn/end seq %s)', session.id, anchor.seq)
   } catch (error) {
-    ctx.logger?.warn?.('dsh-session-recap: %s', error instanceof Error ? error.message : String(error))
+    if (!controller.signal.aborted) {
+      ctx.logger?.warn?.('dsh-session-recap: %s', error instanceof Error ? error.message : String(error))
+    }
   } finally {
     endCall(session.id, controller, activeCalls, activeBySession)
   }
@@ -476,60 +498,90 @@ async function maybeGenerate(
 
 export function apply(ctx: AppContext, config: Config): void {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const awaySessions = new Set<string>()
   const activeCalls = new Set<AbortController>()
   const activeBySession = new Map<string, AbortController>()
   const store: RecapStore = {
     directory: dshHomePath('plugin-data', 'dsh-session-recap'),
-    enabled: config.enabled,
     values: new Map(),
   }
 
-  // Web is optional: the host/command half also works in headless profiles.
+  function clearTimer(sessionId: string): void {
+    const timer = timers.get(sessionId)
+    if (timer !== undefined) clearTimeout(timer)
+    timers.delete(sessionId)
+  }
+
+  function clearRecap(sessionId: string): void {
+    store.values.set(sessionId, null)
+    removeRecapFile(store, sessionId)
+  }
+
+  function armAutomatic(session: Session): void {
+    clearTimer(session.id)
+    if (!config.enabled || !awaySessions.has(session.id)) return
+    const events = session.events
+    if (hasOpenTurn(events) || turnCount(events) < config.minTurns) return
+    const anchor = lastTurnEnd(events)
+    if (anchor === undefined || anchor.data.reason.kind !== 'completed') return
+    if (currentRecap(store, session)?.turnSeq === anchor.seq) return
+    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, anchor.time + config.idleMs - Date.now()))
+    const timer = setTimeout(() => {
+      timers.delete(session.id)
+      if (!awaySessions.has(session.id)) return
+      void maybeGenerate(ctx, config, session, store, activeCalls, activeBySession)
+    }, delay)
+    timers.set(session.id, timer)
+  }
+
+  function setAway(session: Session, away: boolean): void {
+    if (away) {
+      awaySessions.add(session.id)
+      armAutomatic(session)
+      return
+    }
+    awaySessions.delete(session.id)
+    clearTimer(session.id)
+  }
+
+  // Automatic recaps require interactive Web presence. A headless profile still
+  // gets the manual command, matching Claude Code's non-interactive skip rule.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
-    mountWebRoute(webCtx as WebContext, store)
+    mountWebRoute(webCtx as WebContext, store, setAway)
   })
 
-  // Auto idle recap: each completed turn arms a one-shot timer; a newer turn
-  // or session disposal cancels it before the bounded call can do dead work.
   ctx.on('session/event', (session, event) => {
     if (event.type === 'turn/start') {
-      const previous = timers.get(session.id)
-      if (previous !== undefined) clearTimeout(previous)
-      timers.delete(session.id)
+      clearTimer(session.id)
       cancelCall(session.id, activeBySession)
+      clearRecap(session.id)
       return
     }
     if (event.type !== 'turn/end') return
-    const previous = timers.get(session.id)
-    if (previous !== undefined) clearTimeout(previous)
+    clearTimer(session.id)
     cancelCall(session.id, activeBySession)
-    if (!config.enabled) return
-    const timer = setTimeout(() => {
-      timers.delete(session.id)
-      void maybeGenerate(ctx, config, session, store, activeCalls, activeBySession)
-    }, config.idleMs)
-    timers.set(session.id, timer)
+    if (event.data.reason.kind === 'completed') armAutomatic(session)
   })
 
   ctx.on('session/disposed', (session) => {
-    const timer = timers.get(session.id)
-    if (timer !== undefined) clearTimeout(timer)
-    timers.delete(session.id)
+    clearTimer(session.id)
+    awaySessions.delete(session.id)
     cancelCall(session.id, activeBySession)
-    activeBySession.delete(session.id)
     store.values.delete(session.id)
   })
 
   ctx.effect(() => () => {
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
+    awaySessions.clear()
     for (const controller of activeCalls) controller.abort()
     activeCalls.clear()
     activeBySession.clear()
     store.values.clear()
   })
 
-  // Manual trigger: /recap. It remains host-local and writes only the sidecar.
+  // Manual `/recap` is command output only: it does not replace history or
+  // create the automatic-return banner, so prompt-cache history stays intact.
   ctx.inject(['commands'], (commandCtx) => {
     const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
     commandsCtx.commands.register({
@@ -555,7 +607,6 @@ export function apply(ctx: AppContext, config: Config): void {
           if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
             return { kind: 'error' as const, text: 'Recap failed: the session changed while generating; run /recap again' }
           }
-          publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)
           return { kind: 'success' as const, text }
         } catch (error) {
           return { kind: 'error' as const, text: `Recap failed: ${error instanceof Error ? error.message : String(error)}` }
@@ -567,5 +618,5 @@ export function apply(ctx: AppContext, config: Config): void {
     })
   })
 
-  ctx.logger?.info?.('[dsh-session-recap] mounted (idleMs=%s minTurns=%s maxChars=%s enabled=%s)', config.idleMs, config.minTurns, config.maxChars, config.enabled)
+  ctx.logger?.info?.('[dsh-session-recap] mounted (awayMs=%s minTurns=%s maxChars=%s automatic=%s)', config.idleMs, config.minTurns, config.maxChars, config.enabled)
 }

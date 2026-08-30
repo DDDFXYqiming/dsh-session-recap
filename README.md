@@ -2,13 +2,14 @@
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件** —— 在会话空闲后生成 Claude Code 风格的 Away Summary，概括当前会话已完成内容、当前状态和下一步。
+**DeepSeek Harness（DSH）会话回顾插件** —— 当你切走会话或让 Web 窗口失焦后，在后台生成 Claude Code 风格的 Away Summary，返回时用一行文字概括整体目标、当前任务和下一步。
 
 ## 能力
 
-- 会话完成一段时间后自动生成回顾，并支持最少完成轮数配置。
-- `/recap` 手动生成当前会话回顾。
-- 回顾以短文本横幅显示在 Web 对话输入框上方。
+- 仅在 Web 窗口失焦或切走当前会话时后台生成；窗口保持聚焦时不会因单纯空闲而调用模型。
+- 默认要求最后一个完成 turn 已过去 3 分钟且会话至少有 3 个完成 turn，同一 turn 不会连续生成两次。
+- `/recap` 随时按需生成，并以 command output 显示；关闭自动回顾不影响手动命令。
+- 自动回顾以 `※ recap:` 单行横幅显示在 Web 对话输入框上方，最长 400 字符。
 - 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回不会重新出现。
 - 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
 - 中英文界面标签，支持固定 provider/model 或复用当前会话最近路由。
@@ -16,10 +17,11 @@
 
 ## 工作方式
 
-1. 插件监听已完成的 `turn/end`，等待配置的空闲窗口，并只取最近的派生会话消息。
-2. 通过一次有输入、输出和超时上限的辅助 LLM 请求，生成简短的目标 / 进展 / 下一步回顾。
-3. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求结果不会提交。
-4. 结果保存在本地 sidecar，由 loopback、同源 Web route 提供给客户端；会话前进后旧 snapshot 自动失效。
+1. Web client 把窗口 focus/blur、页面可见性和会话切换映射为当前会话的 `active` / `away` 状态。
+2. Host 只在会话处于 `away`、最后一个完成 `turn/end` 已超过 `idleMs`、完成轮数达到 `minTurns` 时启动自动回顾。
+3. 插件从最近的派生会话消息构造有界输入，通过一次独立辅助 LLM 请求生成不超过 40 词、1–2 个纯文本句子的目标 / 进展 / 下一步回顾。
+4. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求结果不会提交。
+5. 自动结果保存在本地 sidecar，由仅限 loopback 的同源 Web route 提供给客户端；手动 `/recap` 只追加 command output，不改变消息历史。
 
 ## 安装
 
@@ -46,8 +48,8 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
 ```yaml
 - id: dsh-session-recap
   config:
-    enabled: true
-    idleMs: 180000       # 空闲窗口（毫秒）
+    enabled: true        # 只控制自动回顾；/recap 始终可用
+    idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
     minTurns: 3          # 自动回顾所需的最少完成轮数
     recentMessages: 30   # 发送给回顾请求的最近派生消息数
     maxChars: 400        # 回顾文本上限
@@ -90,6 +92,8 @@ npm pack
 ## 相关
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- [Claude Code：Session recap](https://code.claude.com/docs/en/interactive-mode#session-recap)
+- [Claude Code：`/recap` 与 prompt cache](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## 授权

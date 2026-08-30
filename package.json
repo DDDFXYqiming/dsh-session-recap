@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-session-recap",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Session recap plugin for DeepSeek Harness (Claude Code-style away summaries)",
   "author": "DDDFXYqiming",
   "license": "MIT",

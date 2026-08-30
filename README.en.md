@@ -2,13 +2,14 @@
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH)** — generates Claude Code-style Away Summaries after a session goes idle, covering what was completed, the current state, and the next action.
+**A session-recap plugin for DeepSeek Harness (DSH)** — generates Claude Code-style Away Summaries in the background after you switch sessions or leave the Web window unfocused, then shows a one-line goal, current-task, and next-action recap when you return.
 
 ## Capabilities
 
-- Automatically generates a recap after an idle window and a configurable minimum number of completed turns.
-- Provides `/recap` for on-demand generation.
-- Renders the recap as a short banner above the Web conversation composer.
+- Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
+- By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn.
+- Provides `/recap` as command output on demand; disabling automatic recaps does not disable the command.
+- Renders automatic output as a `※ recap:` one-line banner above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
 - Includes English and Simplified Chinese UI labels, with optional fixed provider/model routing or reuse of the session's latest route.
@@ -16,10 +17,11 @@
 
 ## How it works
 
-1. The plugin watches completed `turn/end` events, waits for the configured idle window, and selects recent derived session messages.
-2. One bounded auxiliary LLM request produces a concise goal / progress / next-step recap.
-3. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded.
-4. The result is stored in a local sidecar and served to the client through a loopback, same-origin Web route; it expires when the session advances.
+1. The Web client maps window focus/blur, document visibility, and session switches to `active` / `away` presence for the current session.
+2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied.
+3. The plugin frames recent derived messages into bounded input and makes one independent auxiliary LLM request for an under-40-word, 1–2 sentence plain-text goal / progress / next-step recap.
+4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded.
+5. Automatic output is stored in a local sidecar and served through a loopback-only, same-origin Web route. Manual `/recap` appends command output without replacing message history.
 
 ## Installation
 
@@ -46,8 +48,8 @@ The bundle supplies the default entry. To override it, use this bare entry in th
 ```yaml
 - id: dsh-session-recap
   config:
-    enabled: true
-    idleMs: 180000       # idle window in milliseconds
+    enabled: true        # automatic recaps only; /recap remains available
+    idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
     minTurns: 3          # minimum completed turns for automatic recaps
     recentMessages: 30   # recent derived messages sent to the recap request
     maxChars: 400        # recap text limit
@@ -90,6 +92,8 @@ The build helper prefers local dependencies. When developing against a DSH check
 ## Related
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- [Claude Code: Session recap](https://code.claude.com/docs/en/interactive-mode#session-recap)
+- [Claude Code: `/recap` and prompt caching](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## License

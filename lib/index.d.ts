@@ -1,12 +1,12 @@
 /**
  * dsh-session-recap — Claude Code-style session recap for DeepSeek Harness.
  *
- * Host half: watches `session/event` for completed turns; after a configurable
- * idle window, one bounded auxiliary LLM call distills the recent conversation
- * into a short recap. The result is kept in a plugin-owned sidecar rather than
- * the append-only session log, because the current DSH release has no public
- * way for out-of-tree plugins to mark custom events ignorable. A same-origin
- * read-only Web route carries the current snapshot to the client banner.
+ * Host half: watches completed turns and Web focus/session presence. Once the
+ * last completed turn is old enough and the user is genuinely away, one bounded
+ * auxiliary LLM call distills the recent conversation into a short recap. The
+ * result is kept in a plugin-owned sidecar rather than the append-only session
+ * log, because the current DSH release has no public custom-event registration
+ * surface. A same-origin Web route carries presence and the current snapshot.
  *
  * @module @dsh-external/dsh-session-recap
  */
@@ -17,9 +17,9 @@ export declare const name = "@dsh-external/dsh-session-recap";
 /** `llm` is accessed directly by the host generation paths. */
 export declare const inject: string[];
 export interface Config {
-    /** Master toggle. */
+    /** Automatic recap toggle; manual `/recap` remains available. */
     enabled: boolean;
-    /** Idle window after a completed turn before auto-generating a recap (ms). */
+    /** Away window after a completed turn before auto-generating a recap (ms). */
     idleMs: number;
     /** Minimum completed turns before any automatic recap is generated. */
     minTurns: number;
