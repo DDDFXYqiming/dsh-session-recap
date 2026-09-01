@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-session-recap",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Session recap plugin for DeepSeek Harness (automatic away recaps)",
   "author": "DDDFXYqiming",
   "license": "MIT",
@@ -60,7 +60,8 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "typecheck": "node scripts/build.mjs --no-emit",
-    "build:client": "node scripts/build.mjs --client-only"
+    "build:client": "node scripts/build.mjs --client-only",
+    "test": "node test/self-check.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc <5",
