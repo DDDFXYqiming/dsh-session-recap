@@ -186,7 +186,7 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
+  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Write the recap in the same language the user writes in, regardless of the language of these instructions. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */

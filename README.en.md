@@ -13,6 +13,7 @@ People step away from the screen for all sorts of reasons, and the session is st
 - Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
 - By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn. These two gates keep a brief distraction from producing a pointless recap.
 - Provides `/recap` on demand through the same recap card; disabling automatic recaps does not disable the command.
+- Writes the recap in the language the user writes in; the English prompt does not force English output.
 - Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
