@@ -1,5 +1,5 @@
 /**
- * dsh-session-recap — Claude Code-style session recap for DeepSeek Harness.
+ * dsh-session-recap — automatic session recap for DeepSeek Harness.
  *
  * Host half: watches completed turns and Web focus/session presence. Once the
  * last completed turn is old enough and the user is genuinely away, one bounded

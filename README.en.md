@@ -2,11 +2,13 @@
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a Claude Code-style Away Summary in the background. When you come back, a short card summarizes the session's overall goal, the current task, and the suggested next action.
+**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's overall goal, the current task, and the suggested next action.
+
+Current version: **0.0.3**
 
 ## Why this plugin exists
 
-People step away from the screen for all sorts of reasons, and the session is still sitting there when they return. The thread of thought is gone, though, and scrolling back through the message history takes a while. Claude Code's Away Summary exists for exactly this moment. You read a short recap first, then decide where to pick up. This plugin brings the same behavior to the DSH Web. A separate auxiliary LLM request produces the recap, and the finished text is never appended to the conversation message history.
+People step away from the screen for all sorts of reasons, and the session is still sitting there when they return. The thread of thought is gone, though, and scrolling back through the message history takes a while. After a spell away you read a short recap first, then decide where to pick up. This plugin brings that behavior to the DSH Web. A separate auxiliary LLM request produces the recap, and the finished text is never appended to the conversation message history.
 
 ## Capabilities
 
@@ -83,6 +85,7 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 
 | Item | Version or scope |
 | --- | --- |
+| dsh-session-recap | `0.0.3` (`package.json`) |
 | DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
@@ -102,8 +105,7 @@ The build helper prefers local dependencies. When developing against a DSH check
 ## Related
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Claude Code session recap docs](https://code.claude.com/docs/en/interactive-mode#session-recap)
-- [Claude Code `/recap` and prompt caching](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
+- [pi-recap](https://github.com/DDDFXYqiming/pi-recap): the same behavior for the Pi Coding Agent TUI
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## License

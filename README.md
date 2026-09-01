@@ -2,11 +2,13 @@
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份 Claude Code 风格的 Away Summary。等你回来，一张简短的卡片会概括那个会话的整体目标、当前任务和下一步。
+**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的整体目标、当前任务和下一步。
+
+当前版本：**0.0.3**
 
 ## 为什么需要它
 
-人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。Claude Code 的 Away Summary 就是给这种时刻准备的，离开一段时间后回来，先读一段短回顾，再决定从哪里继续。这个插件把同样的行为带进 DSH Web。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
+人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。离开一段时间后回来，先读一段短回顾，再决定从哪里继续——这个插件把这段行为带进 DSH Web。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
 
 ## 能力
 
@@ -83,6 +85,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 | 项目 | 版本或范围 |
 | --- | --- |
+| dsh-session-recap | `0.0.3`（`package.json`） |
 | DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务 |
@@ -102,8 +105,7 @@ npm pack
 ## 相关
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Claude Code 的 Session recap 文档](https://code.claude.com/docs/en/interactive-mode#session-recap)
-- [Claude Code 的 `/recap` 与 prompt cache 说明](https://code.claude.com/docs/en/prompt-caching#running-%2Frecap)
+- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)：同一行为在 Pi Coding Agent TUI 上的实现
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## 授权

@@ -1,5 +1,5 @@
 /**
- * dsh-session-recap — Claude Code-style session recap for DeepSeek Harness.
+ * dsh-session-recap — automatic session recap for DeepSeek Harness.
  *
  * Host half: watches completed turns and Web focus/session presence. Once the
  * last completed turn is old enough and the user is genuinely away, one bounded
@@ -149,7 +149,7 @@ function shortenText(text: string, maxChars: number): string {
 /**
  * Build a bounded, valid JSON transcript from recent complete messages. The
  * opening user request is retained as `goal` when it has fallen out of the
- * recent window, matching Claude Code's broader-session context effect.
+ * recent window so the recap keeps the broader-session context.
  */
 function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string {
   const selected = messages.slice(-recentMessages)
@@ -557,7 +557,7 @@ export function apply(ctx: AppContext, config: Config): void {
   }
 
   // Automatic recaps require interactive Web presence. A headless profile still
-  // gets the manual command, matching Claude Code's non-interactive skip rule.
+  // gets the manual command only; a non-interactive profile never generates automatically.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
     mountWebRoute(webCtx as WebContext, store, setAway)
   })
