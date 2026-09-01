@@ -2,9 +2,9 @@
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's overall goal, the current task, and the suggested next action.
+**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-Current version: **0.0.3**
+Current version: **0.0.4**
 
 ## Why this plugin exists
 
@@ -26,7 +26,7 @@ People step away from the screen for all sorts of reasons, and the session is st
 
 1. The Web client maps window focus/blur, document visibility, and session switches to `active` / `away` presence for the current session.
 2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied. All three conditions must hold before any request goes out, so a brief distraction triggers nothing.
-3. The plugin frames recent derived messages into bounded input and makes one independent auxiliary LLM request for a plain-text goal / progress / next-step recap of at most 40 words in one or two sentences.
+3. The plugin drops tool-result messages before framing bounded input (raw command output is not intent), anchors the current task on the newest user request (never restating a long-finished opening), and makes one independent auxiliary LLM request for a plain-text current-task / progress / next-step recap of at most 40 words in one or two sentences.
 4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded. What you see on return always matches the current progress.
 5. Automatic and manual `/recap` results are stored in a local sidecar and served to the card through a loopback-only, same-origin Web route; recap text is not appended to the conversation message history.
 
@@ -58,7 +58,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     enabled: true        # automatic recaps only; /recap remains available
     idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
     minTurns: 3          # minimum completed turns for automatic recaps
-    recentMessages: 30   # recent derived messages sent to the recap request
+    recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
     maxChars: 400        # recap text limit
     maxInputChars: 24000 # recap input limit in bytes
     maxOutputTokens: 512 # recap-model output token budget
@@ -85,7 +85,7 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 
 | Item | Version or scope |
 | --- | --- |
-| dsh-session-recap | `0.0.3` (`package.json`) |
+| dsh-session-recap | `0.0.4` (`package.json`) |
 | DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
@@ -96,11 +96,14 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 npm install
 npm run typecheck
 npm run build
+npm test
 npm run build:client
 npm pack
 ```
 
 The build helper prefers local dependencies. When developing against a DSH checkout, set `DSH_CHECKOUT`, or set `DSH_GLOBAL_NODE_MODULES` to a compatible global `node_modules` directory. It only creates missing links and leaves existing packages untouched.
+
+The plugin does not import the host `deepFreeze` (that export lived in `dsh-llm` on older hosts and moved to `dsh-util-values` on newer ones, so statically importing either side breaks the other). Request freezing is a small plugin-local implementation, which keeps one artifact compatible with both DSH generations.
 
 ## Related
 

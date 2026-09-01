@@ -2,9 +2,9 @@
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的整体目标、当前任务和下一步。
+**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前版本：**0.0.3**
+当前版本：**0.0.4**
 
 ## 为什么需要它
 
@@ -26,7 +26,7 @@
 
 1. Web client 把窗口 focus/blur、页面可见性和会话切换映射为当前会话的 `active` / `away` 状态。
 2. Host 只在会话处于 `away`、最后一个完成 `turn/end` 已超过 `idleMs`、完成轮数达到 `minTurns` 时启动自动回顾。三个条件同时满足才发起请求，短暂分心不会触发。
-3. 插件从最近的派生消息构造有界输入，通过一次独立辅助 LLM 请求生成不超过 40 词、一到两句的纯文本回顾，内容是目标、进展和下一步。
+3. 插件构造有界输入时先剔除工具结果消息（原始命令输出不算意图），再以最近一条用户请求锚定当前任务（不再复述早已完成的开场请求），通过一次独立辅助 LLM 请求生成不超过 40 词、一到两句的纯文本回顾，内容是当前任务、已完成进展和下一步。
 4. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求的结果不会提交。你回来后看到的结果始终和当前进度对得上。
 5. 自动回顾和手动 `/recap` 都把当前结果保存在本地 sidecar，由仅限 loopback 的同源 Web route 提供给卡片；不会向会话消息历史追加摘要正文。
 
@@ -58,7 +58,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     enabled: true        # 只控制自动回顾；/recap 始终可用
     idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
     minTurns: 3          # 自动回顾所需的最少完成轮数
-    recentMessages: 30   # 发送给回顾请求的最近派生消息数
+    recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
     maxChars: 400        # 回顾文本上限
     maxInputChars: 24000 # 回顾输入上限（字节）
     maxOutputTokens: 512 # 回顾模型的输出 token 预算
@@ -85,7 +85,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 | 项目 | 版本或范围 |
 | --- | --- |
-| dsh-session-recap | `0.0.3`（`package.json`） |
+| dsh-session-recap | `0.0.4`（`package.json`） |
 | DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务 |
@@ -96,11 +96,14 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 npm install
 npm run typecheck
 npm run build
+npm test
 npm run build:client
 npm pack
 ```
 
 构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。
+
+插件不调用宿主的 `deepFreeze`（该导出在旧版宿主属于 `dsh-llm`、新版迁移到了 `dsh-util-values`，静态 import 任意一侧都会打死另一侧的宿主），请求冻结由插件内本地实现完成，因此同一份产物同时兼容新旧 DSH。
 
 ## 相关
 

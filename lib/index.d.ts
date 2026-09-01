@@ -12,6 +12,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type LlmService from '@deepseek-ai/dsh-llm';
+import type { Message } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "@dsh-external/dsh-session-recap";
 /** `llm` is accessed directly by the host generation paths. */
@@ -23,7 +24,7 @@ export interface Config {
     idleMs: number;
     /** Minimum completed turns before any automatic recap is generated. */
     minTurns: number;
-    /** How many recent derived conversation messages feed the recap input. */
+    /** How many recent conversation messages (tool results excluded) feed the recap window. */
     recentMessages: number;
     /** Hard cap on the recap text length (characters). */
     maxChars: number;
@@ -75,5 +76,29 @@ export declare const Config: z<Schemastery.ObjectS<{
 type AppContext = Context & {
     llm: LlmService;
 };
+/** Extract readable context from provider-neutral message content. */
+declare function contentText(content: unknown): string;
+/** Keep both the beginning (goal) and end (next action) when bounding text. */
+declare function shortenText(text: string, maxChars: number): string;
+/**
+ * Build a bounded, valid JSON transcript from recent conversation messages.
+ * Tool-result messages are dropped before windowing: dsh records every tool
+ * result as its own user-role message holding raw command output, so left in,
+ * `recentMessages` would count tool noise instead of conversation and the
+ * byte budget would fill with command output. `goal` anchors on the NEWEST
+ * user request (not the session opening) and is only injected when it has
+ * fallen out of the recent window: by the time the opening request leaves the
+ * window it describes work that is long finished.
+ */
+declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
+/** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
+export declare const internals: {
+    contentText: typeof contentText;
+    shortenText: typeof shortenText;
+    frameTranscript: typeof frameTranscript;
+    systemPrompt: typeof systemPrompt;
+};
+/** Bounded away-summary instruction sent to the auxiliary model. */
+declare function systemPrompt(): string;
 export declare function apply(ctx: AppContext, config: Config): void;
 export {};

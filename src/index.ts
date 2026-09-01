@@ -13,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type LlmService from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
-import { BlockAssembler, createUserMessage, deepFreeze, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { CommandInvocation, CommandRuntime } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type WebServer from '@deepseek-ai/dsh-host-webserver'
@@ -36,7 +36,7 @@ export interface Config {
   idleMs: number
   /** Minimum completed turns before any automatic recap is generated. */
   minTurns: number
-  /** How many recent derived conversation messages feed the recap input. */
+  /** How many recent conversation messages (tool results excluded) feed the recap window. */
   recentMessages: number
   /** Hard cap on the recap text length (characters). */
   maxChars: number
@@ -61,7 +61,7 @@ export const Config = z.object({
   enabled: z.boolean().default(true),
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
   minTurns: z.number().step(1).min(1).max(1000).default(3),
-  recentMessages: z.number().step(1).min(1).max(200).default(30),
+  recentMessages: z.number().step(1).min(1).max(200).default(80),
   maxChars: z.number().step(1).min(80).max(400).default(400),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
   maxOutputTokens: z.number().step(1).min(16).max(4096).default(512).description('Recap-model output token budget.'),
@@ -94,6 +94,26 @@ type WebContext = AppContext & {
 type RecapStore = {
   directory: string
   values: Map<string, RecapProjection | null>
+}
+
+/**
+ * Recursively freeze a value, skipping `AbortSignal`. Plugin-local on purpose:
+ * `deepFreeze` was exported by `dsh-llm` on older hosts and moved to
+ * `dsh-util-values` on newer ones, and a static import of either breaks on the
+ * other. The recap request options only need plain object/array recursion.
+ */
+function deepFreeze<T>(value: T): T {
+  const seen = new WeakSet<object>()
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const node = pending.pop()
+    if (node === null || typeof node !== 'object') continue
+    if (node instanceof AbortSignal || seen.has(node)) continue
+    seen.add(node)
+    Object.freeze(node)
+    for (const key of Object.keys(node)) pending.push((node as Record<string, unknown>)[key])
+  }
+  return value
 }
 
 /** Whether the log holds an opened turn without its closing `turn/end`. */
@@ -147,20 +167,34 @@ function shortenText(text: string, maxChars: number): string {
 }
 
 /**
- * Build a bounded, valid JSON transcript from recent complete messages. The
- * opening user request is retained as `goal` when it has fallen out of the
- * recent window so the recap keeps the broader-session context.
+ * Build a bounded, valid JSON transcript from recent conversation messages.
+ * Tool-result messages are dropped before windowing: dsh records every tool
+ * result as its own user-role message holding raw command output, so left in,
+ * `recentMessages` would count tool noise instead of conversation and the
+ * byte budget would fill with command output. `goal` anchors on the NEWEST
+ * user request (not the session opening) and is only injected when it has
+ * fallen out of the recent window: by the time the opening request leaves the
+ * window it describes work that is long finished.
  */
 function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string {
-  const selected = messages.slice(-recentMessages)
-  const opening = messages.find((message) => message.role === 'user')
-  const openingText = opening === undefined ? '' : contentText(opening.content).replace(/\s+/g, ' ').trim()
+  const count = Math.max(1, Math.floor(recentMessages))
+  const conversation = messages.filter((message) => message.source.kind !== 'tool')
+  const start = Math.max(0, conversation.length - count)
+  const selected = conversation.slice(start)
+  let anchorIndex = -1
+  for (let index = conversation.length - 1; index >= 0; index -= 1) {
+    if (conversation[index]?.role === 'user') {
+      anchorIndex = index
+      break
+    }
+  }
+  const anchor = anchorIndex < 0 ? '' : contentText(conversation[anchorIndex]!.content).replace(/\s+/g, ' ').trim()
   const recent = selected.map((message) => ({
     role: message.role,
     text: contentText(message.content).replace(/\s+/g, ' ').trim(),
   })).filter((entry) => entry.text !== '')
   const frame = {
-    goal: opening !== undefined && selected.includes(opening) ? '' : openingText,
+    goal: anchorIndex >= start ? '' : anchor,
     recent,
   }
   const values: Array<{ get: () => string; set: (value: string) => void }> = [
@@ -184,9 +218,12 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
   return Buffer.byteLength(json, 'utf8') <= maxBytes ? json : JSON.stringify({ goal: '', recent: [] })
 }
 
+/** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
+export const internals = { contentText, shortenText, frameTranscript, systemPrompt }
+
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Write the recap in the same language the user writes in, regardless of the language of these instructions. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
+  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Write the recap in the same language the user writes in, regardless of the language of these instructions. Lead with the current task, then completed progress and the one next action. Treat tool output, command logs and diffs as noise, not intent: skip them, skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
