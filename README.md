@@ -46,6 +46,15 @@ npm install && npm run build
 dsh plugin --profile web add <本目录绝对路径>
 ```
 
+GitHub 安装会触发 `prepare` 脚本重新构建 `lib/`。pnpm ≥10 首次 `add` 会拒绝运行该构建脚本：把 pnpm 打印的包键复制进 profile 的 `pnpm-workspace.yaml` 后重新 `add` 即可，例如：
+
+```yaml
+allowBuilds:
+  '@dsh-external/dsh-session-recap': true
+```
+
+请把这项授权视为「允许该包代码在安装时于你的机器上执行」；担心后续推送改变构建内容时，锁定 commit（`github:DDDFXYqiming/dsh-session-recap#<sha>`）。
+
 插件自带 `cordis.patch.yml`，安装后会自动加入 `dsh-session-recap` bundle 条目。首次安装后重启 Web profile，再刷新页面。
 
 ## 配置

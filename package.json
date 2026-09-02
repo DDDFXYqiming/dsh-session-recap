@@ -61,7 +61,8 @@
     "build": "bash scripts/build.sh",
     "typecheck": "node scripts/build.mjs --no-emit",
     "build:client": "node scripts/build.mjs --client-only",
-    "test": "node test/self-check.mjs"
+    "test": "node test/self-check.mjs",
+    "prepare": "node scripts/build.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc <5",

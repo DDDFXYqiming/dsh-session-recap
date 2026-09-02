@@ -46,6 +46,15 @@ npm install && npm run build
 dsh plugin --profile web add <absolute-path-to-checkout>
 ```
 
+The GitHub route triggers the `prepare` script, which rebuilds `lib/` from source. On the first `add`, pnpm >= 10 refuses to run build scripts of git dependencies: copy the exact package key pnpm prints into the profile's `pnpm-workspace.yaml`, then re-run `add`:
+
+```yaml
+allowBuilds:
+  '@dsh-external/dsh-session-recap': true
+```
+
+Treat this approval as "let this package run code on your machine at install time". Pin a commit (`github:DDDFXYqiming/dsh-session-recap#<sha>`) if you want later pushes to stop changing what gets built.
+
 The package includes `cordis.patch.yml`, which contributes the `dsh-session-recap` bundle entry automatically. Restart the Web profile after the first installation, then refresh the page.
 
 ## Configuration
