@@ -64,7 +64,7 @@ export const Config = z.object({
   recentMessages: z.number().step(1).min(1).max(200).default(80),
   maxChars: z.number().step(1).min(80).max(400).default(400),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
-  maxOutputTokens: z.number().step(1).min(16).max(4096).default(512).description('Recap-model output token budget.'),
+  maxOutputTokens: z.number().step(1).min(16).max(4096).default(1024).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; an exhausted budget with salvageable text still yields a recap, otherwise one escalated retry runs.'),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
   provider: z.string().default('').description('Optional fixed provider; set together with model. Empty reuses the session route.'),
   model: z.string().default('').description('Optional fixed model; set together with provider. Empty reuses the session route.'),
@@ -257,7 +257,11 @@ function resolveRoute(config: Config, session: Session): { provider: string; mod
   throw new Error('dsh-session-recap: no logged model route is available; configure provider and model together')
 }
 
-/** One bounded auxiliary LLM call using only provider-neutral request fields. */
+/**
+ * One bounded auxiliary LLM call using only provider-neutral request fields.
+ * Returns undefined when the output budget is exhausted with no text —
+ * reasoning routes spend maxTokens on thinking too; the caller escalates.
+ */
 async function streamRecapOnce(
   ctx: AppContext,
   config: Config,
@@ -266,7 +270,8 @@ async function streamRecapOnce(
   messages: ReturnType<typeof createUserMessage>[],
   sessionId: Session['id'],
   signal: AbortSignal,
-): Promise<string> {
+  maxTokens: number,
+): Promise<string | undefined> {
   const callDeadline = deadline(signal, config.timeoutMs, RECAP_TIMEOUT_CODE)
   try {
     const options = deepFreeze({
@@ -277,7 +282,7 @@ async function streamRecapOnce(
       ...(config.stopSequences.length === 0 ? {} : { stop: config.stopSequences }),
       messages,
       system,
-      maxTokens: config.maxOutputTokens,
+      maxTokens,
       sessionId,
       signal: callDeadline.signal,
     })
@@ -288,12 +293,7 @@ async function streamRecapOnce(
       assembler.push(chunk)
     }
     callDeadline.signal.throwIfAborted()
-    const terminalError = finishError(assembler.finish)
-    if (terminalError !== undefined) throw terminalError
     const blocks = assembler.blocks()
-    if (blocks.some((block) => block.type === 'tool-call')) {
-      throw new Error('dsh-session-recap: recap output must contain text only')
-    }
     const text = blocks
       .filter((block) => block.type === 'text')
       .map((block) => block.text)
@@ -301,6 +301,14 @@ async function streamRecapOnce(
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, config.maxChars)
+    if (assembler.finish.kind === 'max-tokens') {
+      return text.length > 0 ? text : undefined
+    }
+    const terminalError = finishError(assembler.finish)
+    if (terminalError !== undefined) throw terminalError
+    if (blocks.some((block) => block.type === 'tool-call')) {
+      throw new Error('dsh-session-recap: recap output must contain text only')
+    }
     if (text.length === 0) throw new Error('dsh-session-recap: recap model produced no text')
     return text
   } finally {
@@ -328,7 +336,18 @@ async function generateRecap(
     content: [{ type: 'text', text: framed }],
     source: { kind: 'plugin', plugin: 'dsh-session-recap' },
   })]
-  return streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal)
+  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
+  if (first !== undefined) return first
+  const escalated = Math.min(4096, Math.max(2048, config.maxOutputTokens * 4))
+  const exhausted = (budget: number) => new Error(
+    `dsh-session-recap: recap output reached maxOutputTokens (${budget}) with no text — the recap route spends the budget on reasoning. ` +
+    `Raise maxOutputTokens, or set provider+model together to a non-thinking recap model.`,
+  )
+  if (escalated === config.maxOutputTokens) throw exhausted(escalated)
+  ctx.logger?.info?.(`[dsh-session-recap] no text at maxTokens=${config.maxOutputTokens}; retrying at ${escalated}`)
+  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated)
+  if (second === undefined) throw exhausted(escalated)
+  return second
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

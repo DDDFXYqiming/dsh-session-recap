@@ -70,7 +70,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
     maxChars: 400        # 回顾文本上限
     maxInputChars: 24000 # 回顾输入上限（字节）
-    maxOutputTokens: 512 # 回顾模型的输出 token 预算
+    maxOutputTokens: 1024 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
     timeoutMs: 30000
     provider: ''         # 留空：复用会话最近实际使用的 provider
     model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
@@ -79,7 +79,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     stopSequences: []    # 可选停止词列表
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算：预算耗尽但已有文本时直接使用截断结果；没有文本时自动按 4 倍（上限 4096）预算重试一次，仍失败才报错——此时可继续调大 `maxOutputTokens`，或用 `provider`+`model` 为回顾固定一个非思考模型。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
 ## 存储布局
 

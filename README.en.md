@@ -70,7 +70,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
     maxChars: 400        # recap text limit
     maxInputChars: 24000 # recap input limit in bytes
-    maxOutputTokens: 512 # recap-model output token budget
+    maxOutputTokens: 1024 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000
     provider: ''         # empty: reuse the session's latest effective provider
     model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
@@ -79,7 +79,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     stopSequences: []    # optional stop-sequence list
 ```
 
-`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
+`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. When the recap follows a reasoning model, thinking tokens spend the `maxOutputTokens` budget too: an exhausted budget with salvageable text yields that truncated recap; an empty one triggers a single retry with a 4x budget (capped at 4096) before failing — then raise `maxOutputTokens` further or pin a non-thinking model via `provider`+`model`. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
 
 ## Storage layout
 

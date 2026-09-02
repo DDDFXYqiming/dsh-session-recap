@@ -54,4 +54,9 @@ check('recentMessages default widened to 80', () => {
   assert.equal(Config.dict.recentMessages.meta.default, 80)
 })
 
+check('maxOutputTokens default raised to 1024 and Config fills it', () => {
+  assert.equal(Config.dict.maxOutputTokens.meta.default, 1024)
+  assert.equal(Config({}).maxOutputTokens, 1024)
+})
+
 console.log('PASS all ' + checks + ' self-checks')
