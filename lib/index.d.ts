@@ -93,13 +93,14 @@ declare function shortenText(text: string, maxChars: number): string;
 declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
 /**
- * Closing directive appended after the transcript. The language choice stays
- * with the recap model; the plugin only quotes the user's own latest message
- * verbatim as the sample to mirror — abstract "match the user's language"
- * rules lose to English-heavy transcripts, a concrete quoted sample does not.
- * No script detection, no hardcoded language names.
+ * Closing directive appended after the transcript. The plugin quotes up to
+ * the three newest real-user messages as samples; deciding which parts are
+ * the user's own sentences versus pasted logs/code/quotes is a semantic call
+ * left to the recap model — that is exactly what script counting cannot do.
+ * Fallback ladder: samples + user entries → assistant reply language (the
+ * assistant mirrors the user). No language names, no classification in code.
  */
-declare function languageDirective(lastUserText: string): string;
+declare function languageDirective(samples: readonly string[]): string;
 export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
