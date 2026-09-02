@@ -106,18 +106,44 @@ window.__ModuleLoader__.load({
       var setArmed = armed[1]
       var shownKey = react.useRef(null)
       var useSession = props.useSession
-      var activityKey = useSession(function (snapshot) {
-        var order = snapshot.chat.order
-        var visibleCount = 0
-        var lastVisible = ''
-        for (var index = 0; index < order.length; index += 1) {
-          var key = order[index]
-          if (snapshot.chat.nodes.get(key)?.kind === 'command') continue
-          visibleCount += 1
-          lastVisible = key
-        }
-        return String(snapshot.running) + ':' + String(snapshot.pending.length) + ':' + String(visibleCount) + ':' + lastVisible
+      var useConversation = props.useConversation
+      // Session lifecycle part works on both host generations (pending is
+      // absent-safe: newer snapshots may omit it).
+      var sessionActivity = useSession(function (snapshot) {
+        var pending = Array.isArray(snapshot.pending) ? snapshot.pending.length : ''
+        return String(snapshot.running) + ':' + String(pending)
       })
+      // Chat timeline part: the chat projection moved out of the Session
+      // snapshot into Conversation views ('chat' target). Fall back to the
+      // legacy snapshot.chat shape when useConversation is absent (old hosts).
+      var chatActivity = useConversation
+        ? useConversation(function (conversation) {
+            var chat = conversation.views.get('chat')
+            var order = chat ? chat.order : []
+            var visibleCount = 0
+            var lastVisible = ''
+            for (var index = 0; index < order.length; index += 1) {
+              var key = order[index]
+              if (chat.nodes.get(key)?.kind === 'command') continue
+              visibleCount += 1
+              lastVisible = key
+            }
+            return String(visibleCount) + ':' + lastVisible
+          })
+        : useSession(function (snapshot) {
+            var chat = snapshot.chat
+            if (!chat || !Array.isArray(chat.order)) return ''
+            var visibleCount = 0
+            var lastVisible = ''
+            for (var index = 0; index < chat.order.length; index += 1) {
+              var key = chat.order[index]
+              if (chat.nodes.get(key)?.kind === 'command') continue
+              visibleCount += 1
+              lastVisible = key
+            }
+            return String(visibleCount) + ':' + lastVisible
+          })
+      var activityKey = sessionActivity + ':' + chatActivity
       var lastActivity = react.useRef(activityKey)
 
       // The host route is deliberately polled: the HTTP carrier has no
