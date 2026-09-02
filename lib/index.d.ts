@@ -91,23 +91,12 @@ declare function shortenText(text: string, maxChars: number): string;
  * window it describes work that is long finished.
  */
 declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
-/** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
-/**
- * Detect the language the user writes in from their own messages (tool
- * echoes and injected context excluded). Script counts decide: kana wins for
- * Japanese, then hangul, then CJK-dominant, else Latin. Empty when the
- * session carries no user text to judge.
- */
-declare function detectUserLanguage(messages: readonly Message[]): string;
-/** Explicit closing directive: relative "match the user's language" prompts lose to English-heavy transcripts. */
-declare function languageDirective(lang: string): string;
 export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
     frameTranscript: typeof frameTranscript;
     systemPrompt: typeof systemPrompt;
-    detectUserLanguage: typeof detectUserLanguage;
-    languageDirective: typeof languageDirective;
+    RECAP_LANGUAGE_DIRECTIVE: string;
 };
 /** Bounded away-summary instruction sent to the auxiliary model. */
 declare function systemPrompt(): string;

@@ -178,7 +178,13 @@ function shortenText(text: string, maxChars: number): string {
  */
 function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string {
   const count = Math.max(1, Math.floor(recentMessages))
-  const conversation = messages.filter((message) => message.source.kind !== 'tool')
+  // Transcript purity: only real human input counts as a user entry. Injected
+  // context (runtime snapshots, skill catalog, agent instructions), subagent
+  // reports, plugin notices, and tool echoes all arrive under role 'user'
+  // with other source kinds and would poison the language and intent signal.
+  const conversation = messages.filter((message) =>
+    message.role === 'assistant' || (message.role === 'user' && message.source.kind === 'user'),
+  )
   const start = Math.max(0, conversation.length - count)
   const selected = conversation.slice(start)
   let anchorIndex = -1
@@ -219,60 +225,22 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
 }
 
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
+
 /**
- * Detect the language the user writes in from their own messages (tool
- * echoes and injected context excluded). Script counts decide: kana wins for
- * Japanese, then hangul, then CJK-dominant, else Latin. Empty when the
- * session carries no user text to judge.
+ * Closing directive appended after the transcript. The language choice stays
+ * with the recap model — it reads the user-role entries (only real human
+ * input survives the transcript filter) and mirrors their language. The
+ * directive only makes the rule absolute and positional; no script detection,
+ * no hardcoded language.
  */
-function detectUserLanguage(messages: readonly Message[]): string {
-  const classify = (text: string): string => {
-    let kana = 0
-    let hangul = 0
-    let han = 0
-    let latin = 0
-    for (const ch of text) {
-      const code = ch.codePointAt(0) ?? 0
-      if (code >= 0x3040 && code <= 0x30ff) kana += 1
-      else if (code >= 0xac00 && code <= 0xd7af) hangul += 1
-      else if (code >= 0x4e00 && code <= 0x9fff) han += 1
-      else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) latin += 1
-    }
-    if (kana > 0 && kana * 2 >= han && kana >= latin) return '日本語'
-    if (hangul > 0 && hangul >= latin) return '한국어'
-    if (han > 0 && han >= latin) return '中文'
-    if (latin > 0 && han === 0 && kana === 0 && hangul === 0) return 'English'
-    return ''
-  }
-  const texts: string[] = []
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (!message || message.role !== 'user' || message.source.kind !== 'user') continue
-    const text = contentText(message.content).trim()
-    if (text === '') continue
-    texts.push(text)
-    if (texts.join(' ').length >= 600) break
-  }
-  // The newest user message decides; pooled recent user text is the fallback
-  // when the newest one is too short or script-neutral (paths, ids).
-  for (const text of texts) {
-    const direct = classify(text)
-    if (direct !== '') return direct
-  }
-  return classify(texts.join(' '))
-}
+const RECAP_LANGUAGE_DIRECTIVE =
+  "\n\n[recap-language] Determine the language the user writes in from the user-role entries above and write the ENTIRE recap in exactly that language, regardless of the language of the assistant entries, code, logs, or this directive."
 
-/** Explicit closing directive: relative "match the user's language" prompts lose to English-heavy transcripts. */
-function languageDirective(lang: string): string {
-  if (lang === '') return ''
-  return `\n\n[recap-language] The user writes in ${lang}. Write the ENTIRE recap in ${lang}, regardless of the language of the transcript above.`
-}
-
-export const internals = { contentText, shortenText, frameTranscript, systemPrompt, detectUserLanguage, languageDirective }
+export const internals = { contentText, shortenText, frameTranscript, systemPrompt, RECAP_LANGUAGE_DIRECTIVE }
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Write the recap in the same language the user writes in, regardless of the language of these instructions. Lead with the current task, then completed progress and the one next action. Treat tool output, command logs and diffs as noise, not intent: skip them, skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
+  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. The transcript labels every entry with its role: user entries are the human writing in their own words, assistant entries are model output. Write the recap in the language of the user entries, regardless of the language of the assistant entries, code, logs, or these instructions. Lead with the current task, then completed progress and the one next action. Treat tool output, command logs and diffs as noise, not intent: skip them, skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
@@ -381,7 +349,7 @@ async function generateRecap(
   if (inputBytes > config.maxInputChars) {
     throw new Error(`dsh-session-recap: transcript is ${inputBytes} bytes, exceeding maxInputChars ${config.maxInputChars}`)
   }
-  const withDirective = framed + languageDirective(detectUserLanguage(derived))
+  const withDirective = framed + RECAP_LANGUAGE_DIRECTIVE
   const messages = [createUserMessage({
     content: [{ type: 'text', text: withDirective }],
     source: { kind: 'plugin', plugin: 'dsh-session-recap' },

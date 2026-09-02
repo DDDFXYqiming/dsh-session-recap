@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt, detectUserLanguage, languageDirective } = internals
+const { frameTranscript, systemPrompt, RECAP_LANGUAGE_DIRECTIVE } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
@@ -46,7 +46,7 @@ check('prompt leads with the current task and names tool noise', () => {
   const prompt = systemPrompt()
   assert.match(prompt, /Lead with the current task/)
   assert.match(prompt, /as noise, not intent/)
-  assert.match(prompt, /same language the user writes in/)
+  assert.match(prompt, /language of the user entries/)
   assert.ok(!prompt.includes('overall goal'))
 })
 
@@ -59,14 +59,33 @@ check('maxOutputTokens default raised to 1024 and Config fills it', () => {
   assert.equal(Config({}).maxOutputTokens, 1024)
 })
 
-const uzh = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
-const uen = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
-check('language detection follows the newest user text and script mix', () => {
-  assert.equal(detectUserLanguage([uen('deploy the model and fix the loader'), uzh('还是不行，强制刷新都弹不出来')]), '中文')
-  assert.equal(detectUserLanguage([uzh('你来修复呗'), uen('please just write in English from now on for this project tooling')]), 'English')
-  assert.equal(detectUserLanguage([{ role: 'user', source: { kind: 'tool' }, content: [{ type: 'text', text: '中文工具输出' }] }]), '')
-  assert.match(languageDirective('中文'), /recap-language/)
-  assert.equal(languageDirective(''), '')
+check('transcript keeps only real human input as user entries', () => {
+  const injected = (kind, text) => ({ role: 'user', source: { kind }, content: [{ type: 'text', text }] })
+  const transcript = frameTranscript([
+    injected('plugin', 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots in English.'),
+    injected('subagent-report', 'Background subagent finished with an English report.'),
+    injected('agent-instructions', '<system-reminder> English instructions </system-reminder>'),
+    assistant('English assistant prose about code and logs.'),
+    user('修 recap 的语言判定'),
+  ], 80, 24000)
+  const parsed = JSON.parse(transcript)
+  const userEntries = parsed.recent.filter((entry) => entry.role === 'user')
+  assert.equal(userEntries.length, 1)
+  assert.ok(userEntries[0].text.includes('修 recap 的语言判定'))
+})
+
+check('goal anchor ignores injected user-role messages', () => {
+  const injected = { role: 'user', source: { kind: 'plugin' }, content: [{ type: 'text', text: 'English injected context that is not the human' }] }
+  const messages = [user('真正的最新请求'), assistant('ok'), injected]
+  for (let index = 0; index < 90; index++) messages.push(assistant('步骤 ' + index))
+  const parsed = JSON.parse(frameTranscript(messages, 5, 24000))
+  assert.equal(parsed.goal, '真正的最新请求')
+})
+
+check('recap language directive is positional and model-judged', () => {
+  assert.match(RECAP_LANGUAGE_DIRECTIVE, /user-role entries above/)
+  assert.match(RECAP_LANGUAGE_DIRECTIVE, /ENTIRE recap/)
+  assert.ok(!/中文|English/.test(RECAP_LANGUAGE_DIRECTIVE.replace('the language the user writes in', '')))
 })
 
 console.log('PASS all ' + checks + ' self-checks')
