@@ -219,7 +219,56 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
 }
 
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
-export const internals = { contentText, shortenText, frameTranscript, systemPrompt }
+/**
+ * Detect the language the user writes in from their own messages (tool
+ * echoes and injected context excluded). Script counts decide: kana wins for
+ * Japanese, then hangul, then CJK-dominant, else Latin. Empty when the
+ * session carries no user text to judge.
+ */
+function detectUserLanguage(messages: readonly Message[]): string {
+  const classify = (text: string): string => {
+    let kana = 0
+    let hangul = 0
+    let han = 0
+    let latin = 0
+    for (const ch of text) {
+      const code = ch.codePointAt(0) ?? 0
+      if (code >= 0x3040 && code <= 0x30ff) kana += 1
+      else if (code >= 0xac00 && code <= 0xd7af) hangul += 1
+      else if (code >= 0x4e00 && code <= 0x9fff) han += 1
+      else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) latin += 1
+    }
+    if (kana > 0 && kana * 2 >= han && kana >= latin) return '日本語'
+    if (hangul > 0 && hangul >= latin) return '한국어'
+    if (han > 0 && han >= latin) return '中文'
+    if (latin > 0 && han === 0 && kana === 0 && hangul === 0) return 'English'
+    return ''
+  }
+  const texts: string[] = []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== 'user' || message.source.kind !== 'user') continue
+    const text = contentText(message.content).trim()
+    if (text === '') continue
+    texts.push(text)
+    if (texts.join(' ').length >= 600) break
+  }
+  // The newest user message decides; pooled recent user text is the fallback
+  // when the newest one is too short or script-neutral (paths, ids).
+  for (const text of texts) {
+    const direct = classify(text)
+    if (direct !== '') return direct
+  }
+  return classify(texts.join(' '))
+}
+
+/** Explicit closing directive: relative "match the user's language" prompts lose to English-heavy transcripts. */
+function languageDirective(lang: string): string {
+  if (lang === '') return ''
+  return `\n\n[recap-language] The user writes in ${lang}. Write the ENTIRE recap in ${lang}, regardless of the language of the transcript above.`
+}
+
+export const internals = { contentText, shortenText, frameTranscript, systemPrompt, detectUserLanguage, languageDirective }
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
@@ -332,8 +381,9 @@ async function generateRecap(
   if (inputBytes > config.maxInputChars) {
     throw new Error(`dsh-session-recap: transcript is ${inputBytes} bytes, exceeding maxInputChars ${config.maxInputChars}`)
   }
+  const withDirective = framed + languageDirective(detectUserLanguage(derived))
   const messages = [createUserMessage({
-    content: [{ type: 'text', text: framed }],
+    content: [{ type: 'text', text: withDirective }],
     source: { kind: 'plugin', plugin: 'dsh-session-recap' },
   })]
   const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)

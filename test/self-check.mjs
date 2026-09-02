@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt } = internals
+const { frameTranscript, systemPrompt, detectUserLanguage, languageDirective } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
@@ -57,6 +57,16 @@ check('recentMessages default widened to 80', () => {
 check('maxOutputTokens default raised to 1024 and Config fills it', () => {
   assert.equal(Config.dict.maxOutputTokens.meta.default, 1024)
   assert.equal(Config({}).maxOutputTokens, 1024)
+})
+
+const uzh = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
+const uen = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
+check('language detection follows the newest user text and script mix', () => {
+  assert.equal(detectUserLanguage([uen('deploy the model and fix the loader'), uzh('还是不行，强制刷新都弹不出来')]), '中文')
+  assert.equal(detectUserLanguage([uzh('你来修复呗'), uen('please just write in English from now on for this project tooling')]), 'English')
+  assert.equal(detectUserLanguage([{ role: 'user', source: { kind: 'tool' }, content: [{ type: 'text', text: '中文工具输出' }] }]), '')
+  assert.match(languageDirective('中文'), /recap-language/)
+  assert.equal(languageDirective(''), '')
 })
 
 console.log('PASS all ' + checks + ' self-checks')
