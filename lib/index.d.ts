@@ -91,12 +91,21 @@ declare function shortenText(text: string, maxChars: number): string;
  * window it describes work that is long finished.
  */
 declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
+/** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
+/**
+ * Closing directive appended after the transcript. The language choice stays
+ * with the recap model; the plugin only quotes the user's own latest message
+ * verbatim as the sample to mirror — abstract "match the user's language"
+ * rules lose to English-heavy transcripts, a concrete quoted sample does not.
+ * No script detection, no hardcoded language names.
+ */
+declare function languageDirective(lastUserText: string): string;
 export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
     frameTranscript: typeof frameTranscript;
     systemPrompt: typeof systemPrompt;
-    RECAP_LANGUAGE_DIRECTIVE: string;
+    languageDirective: typeof languageDirective;
 };
 /** Bounded away-summary instruction sent to the auxiliary model. */
 declare function systemPrompt(): string;

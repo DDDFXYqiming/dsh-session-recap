@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt, RECAP_LANGUAGE_DIRECTIVE } = internals
+const { frameTranscript, systemPrompt, languageDirective } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
@@ -82,10 +82,14 @@ check('goal anchor ignores injected user-role messages', () => {
   assert.equal(parsed.goal, '真正的最新请求')
 })
 
-check('recap language directive is positional and model-judged', () => {
-  assert.match(RECAP_LANGUAGE_DIRECTIVE, /user-role entries above/)
-  assert.match(RECAP_LANGUAGE_DIRECTIVE, /ENTIRE recap/)
-  assert.ok(!/中文|English/.test(RECAP_LANGUAGE_DIRECTIVE.replace('the language the user writes in', '')))
+check('language directive quotes the newest user message as the sample, no language names', () => {
+  const d = languageDirective('现在的情况是第一次recap是英文，然后我关掉之后后面两次都弹不出来')
+  assert.match(d, /recap-language/)
+  assert.match(d, /verbatim/)
+  assert.ok(d.includes('现在的情况是第一次recap是英文'))
+  assert.ok(!/中文|English|日本語/.test(d))
+  const empty = languageDirective('   ')
+  assert.match(empty, /user-role entries above/)
 })
 
 console.log('PASS all ' + checks + ' self-checks')
