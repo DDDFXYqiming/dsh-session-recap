@@ -62,9 +62,9 @@ export const Config = z.object({
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
   minTurns: z.number().step(1).min(1).max(1000).default(3),
   recentMessages: z.number().step(1).min(1).max(200).default(80),
-  maxChars: z.number().step(1).min(80).max(400).default(400),
+  maxChars: z.number().step(1).min(80).max(2000).default(1200),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
-  maxOutputTokens: z.number().step(1).min(16).max(4096).default(1024).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; an exhausted budget with salvageable text still yields a recap, otherwise one escalated retry runs.'),
+  maxOutputTokens: z.number().step(1).min(16).max(4096).default(2048).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; an exhausted budget with salvageable text still yields a recap, otherwise one escalated retry runs.'),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
   provider: z.string().default('').description('Optional fixed provider; set together with model. Empty reuses the session route.'),
   model: z.string().default('').description('Optional fixed model; set together with provider. Empty reuses the session route.'),
@@ -78,7 +78,7 @@ const RECAP_TIMEOUT_CODE = 'SESSION_RECAP_TIMEOUT'
 /** Route used by the Web client to read the in-memory/sidecar snapshot. */
 const RECAP_ROUTE = '/api/dsh-session-recap'
 /** Maximum accepted size of one sidecar snapshot. */
-const MAX_STORED_RECAP_CHARS = 400
+const MAX_STORED_RECAP_CHARS = 2000
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 const LOOPBACK_ORIGIN = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 
@@ -164,6 +164,14 @@ function shortenText(text: string, maxChars: number): string {
   const head = Math.ceil((maxChars - 21) * 0.65)
   const tail = maxChars - 21 - head
   return `${text.slice(0, head)} … [truncated] … ${text.slice(-tail)}`
+}
+
+/** Fall back to the last complete sentence so a cut recap never ends mid-sentence. */
+function trimToSentence(text: string): string {
+  const cjk = text.match(/^[\s\S]*[。！？；]/)
+  const ascii = text.match(/^[\s\S]*[.!?;](?=\s|$)/)
+  const best = cjk && ascii ? (cjk[0].length >= ascii[0].length ? cjk : ascii) : (cjk ?? ascii)
+  return best ? best[0].trimEnd() : text
 }
 
 /**
@@ -261,11 +269,11 @@ function languageDirective(samples: readonly string[]): string {
     + 'Write the ENTIRE recap in that language, regardless of the language of any code, log, or this directive.'
 }
 
-export const internals = { contentText, shortenText, stripThink, frameTranscript, systemPrompt, languageDirective }
+export const internals = { contentText, shortenText, stripThink, trimToSentence, frameTranscript, systemPrompt, languageDirective }
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. The transcript labels every entry with its role: user entries are the human writing in their own words, assistant entries are model output. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then completed progress and the one next action. Treat tool output, command logs and diffs as noise, not intent: skip them, skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.'
+  return 'The user stepped away and is coming back. Recap in 2-4 plain sentences (roughly 100-200 Chinese characters), no markdown. The transcript labels every entry with its role: user entries are the human writing in their own words, assistant entries are model output. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then the concrete progress, findings, and decisions worth knowing (name files, numbers, verdicts), and end with the one next action. Every sentence must be complete; never leave a thought half-finished. Treat tool output, command logs and diffs as noise, not intent: do not quote raw logs or enumerate tool calls.'
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
@@ -313,6 +321,7 @@ async function streamRecapOnce(
   sessionId: Session['id'],
   signal: AbortSignal,
   maxTokens: number,
+  salvage: boolean,
 ): Promise<string | undefined> {
   const callDeadline = deadline(signal, config.timeoutMs, RECAP_TIMEOUT_CODE)
   try {
@@ -336,7 +345,7 @@ async function streamRecapOnce(
     }
     callDeadline.signal.throwIfAborted()
     const blocks = assembler.blocks()
-    const text = stripThink(
+    const raw = stripThink(
       blocks
         .filter((block) => block.type === 'text')
         .map((block) => block.text)
@@ -344,9 +353,15 @@ async function streamRecapOnce(
     )
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, config.maxChars)
+    const clipped = raw.slice(0, config.maxChars)
+    // A recap cut mid-sentence (token budget or char cap) reads as a bug; keep only
+    // complete sentences. First attempt returns undefined on max-tokens so the
+    // caller escalates the budget instead of publishing half a sentence.
+    const text = raw.length > clipped.length || assembler.finish.kind === 'max-tokens'
+      ? trimToSentence(clipped)
+      : clipped
     if (assembler.finish.kind === 'max-tokens') {
-      return text.length > 0 ? text : undefined
+      return salvage && text.length > 0 ? text : undefined
     }
     const terminalError = finishError(assembler.finish)
     if (terminalError !== undefined) throw terminalError
@@ -389,7 +404,7 @@ async function generateRecap(
     content: [{ type: 'text', text: withDirective }],
     source: { kind: 'plugin', plugin: 'dsh-session-recap' },
   })]
-  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
+  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens, false)
   if (first !== undefined) return first
   const escalated = Math.min(4096, Math.max(2048, config.maxOutputTokens * 4))
   const exhausted = (budget: number) => new Error(
@@ -398,7 +413,7 @@ async function generateRecap(
   )
   if (escalated === config.maxOutputTokens) throw exhausted(escalated)
   ctx.logger?.info?.(`[dsh-session-recap] no text at maxTokens=${config.maxOutputTokens}; retrying at ${escalated}`)
-  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated)
+  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated, true)
   if (second === undefined) throw exhausted(escalated)
   return second
 }
@@ -707,7 +722,7 @@ export function apply(ctx: AppContext, config: Config): void {
     const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
     commandsCtx.commands.register({
       name: 'recap',
-      description: 'Generate a short session recap: the current task and one next action.',
+      description: 'Generate a session recap: current task, progress, key findings, next action.',
       handler: async ({ agent, signal }: CommandInvocation) => {
         const session = agent.session
         if (hasOpenTurn(session.events)) {

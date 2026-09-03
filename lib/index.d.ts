@@ -80,6 +80,8 @@ type AppContext = Context & {
 declare function contentText(content: unknown): string;
 /** Keep both the beginning (goal) and end (next action) when bounding text. */
 declare function shortenText(text: string, maxChars: number): string;
+/** Fall back to the last complete sentence so a cut recap never ends mid-sentence. */
+declare function trimToSentence(text: string): string;
 /**
  * Older model services emit chain-of-thought inline in the text channel
  * as think / thinking / thought tag blocks instead of using a separate
@@ -113,6 +115,7 @@ export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
     stripThink: typeof stripThink;
+    trimToSentence: typeof trimToSentence;
     frameTranscript: typeof frameTranscript;
     systemPrompt: typeof systemPrompt;
     languageDirective: typeof languageDirective;

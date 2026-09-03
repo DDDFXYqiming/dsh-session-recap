@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt, languageDirective, stripThink } = internals
+const { frameTranscript, systemPrompt, languageDirective, stripThink, trimToSentence } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
@@ -55,9 +55,16 @@ check('recentMessages default widened to 80', () => {
   assert.equal(Config.dict.recentMessages.meta.default, 80)
 })
 
-check('maxOutputTokens default raised to 1024 and Config fills it', () => {
-  assert.equal(Config.dict.maxOutputTokens.meta.default, 1024)
-  assert.equal(Config({}).maxOutputTokens, 1024)
+check('maxOutputTokens default raised to 2048 and Config fills it', () => {
+  assert.equal(Config.dict.maxOutputTokens.meta.default, 2048)
+  assert.equal(Config({}).maxOutputTokens, 2048)
+})
+
+check('trimToSentence keeps only complete sentences, never cuts decimals', () => {
+  assert.equal(trimToSentence('修复了问题。然后开始测试下一个'), '修复了问题。')
+  assert.equal(trimToSentence('耗时 1.5 秒的模板路径'), '耗时 1.5 秒的模板路径')
+  assert.equal(trimToSentence('fixed it. then ran the next 1.5 sec test'), 'fixed it.')
+  assert.equal(trimToSentence('no terminator at all'), 'no terminator at all')
 })
 
 check('transcript keeps only real human input as user entries', () => {
