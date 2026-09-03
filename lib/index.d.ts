@@ -81,6 +81,14 @@ declare function contentText(content: unknown): string;
 /** Keep both the beginning (goal) and end (next action) when bounding text. */
 declare function shortenText(text: string, maxChars: number): string;
 /**
+ * Older model services emit chain-of-thought inline in the text channel
+ * as think / thinking / thought tag blocks instead of using a separate
+ * reasoning channel; strip those blocks so only the answer reaches the
+ * recap card. (Tag literals omitted here on purpose: agent tool-call
+ * payloads strip them, which once silently broke this module's tests.)
+ */
+declare function stripThink(text: string): string;
+/**
  * Build a bounded, valid JSON transcript from recent conversation messages.
  * Tool-result messages are dropped before windowing: dsh records every tool
  * result as its own user-role message holding raw command output, so left in,
@@ -104,6 +112,7 @@ declare function languageDirective(samples: readonly string[]): string;
 export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
+    stripThink: typeof stripThink;
     frameTranscript: typeof frameTranscript;
     systemPrompt: typeof systemPrompt;
     languageDirective: typeof languageDirective;

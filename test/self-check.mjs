@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt, languageDirective } = internals
+const { frameTranscript, systemPrompt, languageDirective, stripThink } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
@@ -99,6 +99,30 @@ check('frameTranscript survives image-only and empty user messages', () => {
   const t = frameTranscript([img, user('看图'), assistant('ok')], 80, 24000)
   const parsed = JSON.parse(t)
   assert.equal(parsed.recent.filter((e) => e.role === 'user').length, 1)
+})
+
+// Old model services leak chain-of-thought into the text channel; the tags
+// are built from char codes here because agent tool-call payloads strip them.
+const T = String.fromCharCode(60) + 'think' + String.fromCharCode(62)
+const TE = String.fromCharCode(60) + '/think' + String.fromCharCode(62)
+const TH = String.fromCharCode(60) + 'thinking' + String.fromCharCode(62)
+const THE = String.fromCharCode(60) + '/thinking' + String.fromCharCode(62)
+const TT = String.fromCharCode(60) + 'thought' + String.fromCharCode(62)
+const TTE = String.fromCharCode(60) + '/thought' + String.fromCharCode(62)
+
+check('stripThink removes inline think/thinking/thought blocks (old model services)', () => {
+  assert.equal(stripThink(T + 'poisoned chain of thought.' + TE + 'Real answer.'), 'Real answer.')
+  assert.equal(stripThink('a' + TH + 'x' + THE + 'b'), 'ab')
+  assert.equal(stripThink('a' + TT + 'x' + TTE + 'b'), 'ab')
+  assert.equal(stripThink(T + 'x' + TE + 'mid' + T + 'y' + TE), 'mid')
+  assert.equal(stripThink('answer before' + T + 'trailing unclosed tail'), 'answer before')
+  assert.equal(stripThink('plain text stays'), 'plain text stays')
+})
+
+check('transcript entries never carry inline think blocks into the recap input', () => {
+  const t = frameTranscript([user('继续'), assistant(T + 'poisoned chain of thought.' + TE + 'Real answer.')], 80, 24000)
+  assert.ok(t.includes('Real answer'))
+  assert.ok(!t.includes('poisoned') && !t.includes('chain of thought'))
 })
 
 console.log('PASS all ' + checks + ' self-checks')

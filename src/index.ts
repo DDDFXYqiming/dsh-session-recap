@@ -167,6 +167,19 @@ function shortenText(text: string, maxChars: number): string {
 }
 
 /**
+ * Older model services emit chain-of-thought inline in the text channel
+ * as think / thinking / thought tag blocks instead of using a separate
+ * reasoning channel; strip those blocks so only the answer reaches the
+ * recap card. (Tag literals omitted here on purpose: agent tool-call
+ * payloads strip them, which once silently broke this module's tests.)
+ */
+function stripThink(text: string): string {
+  return text
+    .replace(/<\s*(?:think(?:ing)?|thought|reasoning)\s*>[\s\S]*?<\s*\/\s*(?:think(?:ing)?|thought|reasoning)\s*>/gi, '')
+    .replace(/<\s*(?:think(?:ing)?|thought|reasoning)\s*>[\s\S]*$/i, '')
+}
+
+/**
  * Build a bounded, valid JSON transcript from recent conversation messages.
  * Tool-result messages are dropped before windowing: dsh records every tool
  * result as its own user-role message holding raw command output, so left in,
@@ -194,10 +207,10 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
       break
     }
   }
-  const anchor = anchorIndex < 0 ? '' : contentText(conversation[anchorIndex]!.content).replace(/\s+/g, ' ').trim()
+  const anchor = anchorIndex < 0 ? '' : stripThink(contentText(conversation[anchorIndex]!.content)).replace(/\s+/g, ' ').trim()
   const recent = selected.map((message) => ({
     role: message.role,
-    text: contentText(message.content).replace(/\s+/g, ' ').trim(),
+    text: stripThink(contentText(message.content)).replace(/\s+/g, ' ').trim(),
   })).filter((entry) => entry.text !== '')
   const frame = {
     goal: anchorIndex >= start ? '' : anchor,
@@ -248,7 +261,7 @@ function languageDirective(samples: readonly string[]): string {
     + 'Write the ENTIRE recap in that language, regardless of the language of any code, log, or this directive.'
 }
 
-export const internals = { contentText, shortenText, frameTranscript, systemPrompt, languageDirective }
+export const internals = { contentText, shortenText, stripThink, frameTranscript, systemPrompt, languageDirective }
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
@@ -323,10 +336,12 @@ async function streamRecapOnce(
     }
     callDeadline.signal.throwIfAborted()
     const blocks = assembler.blocks()
-    const text = blocks
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
-      .join(' ')
+    const text = stripThink(
+      blocks
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join(' '),
+    )
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, config.maxChars)
