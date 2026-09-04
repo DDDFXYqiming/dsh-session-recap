@@ -476,7 +476,7 @@ function currentRecap(store: RecapStore, session: Session): RecapProjection | nu
   const id = session.id
   if (store.values.has(id)) {
     const cached = store.values.get(id) ?? null
-    if (cached !== null && !isCurrentRecap(session.events, cached)) {
+    if (cached !== null && !isCurrentRecap(session.snapshotEvents(), cached)) {
       store.values.set(id, null)
       removeRecapFile(store, id)
       return null
@@ -484,7 +484,7 @@ function currentRecap(store: RecapStore, session: Session): RecapProjection | nu
     return cached
   }
   const recap = readRecapFile(store, id)
-  if (recap === undefined || !isCurrentRecap(session.events, recap)) {
+  if (recap === undefined || !isCurrentRecap(session.snapshotEvents(), recap)) {
     store.values.set(id, null)
     if (recap !== undefined) removeRecapFile(store, id)
     return null
@@ -607,7 +607,7 @@ async function maybeGenerate(
   activeCalls: Set<AbortController>,
   activeBySession: Map<string, AbortController>,
 ): Promise<void> {
-  const events = session.events
+  const events = session.snapshotEvents()
   if (hasOpenTurn(events)) return
   if (turnCount(events) < config.minTurns) return
   const anchor = lastTurnEnd(events)
@@ -617,7 +617,7 @@ async function maybeGenerate(
   if (controller === undefined) return
   try {
     const text = await generateRecap(ctx, config, session, controller.signal)
-    const nowEvents = session.events
+    const nowEvents = session.snapshotEvents()
     const nowEnd = lastTurnEnd(nowEvents)
     if (hasOpenTurn(nowEvents) || nowEnd === undefined || nowEnd.seq !== anchor.seq || nowEnd.data.reason.kind !== 'completed') return
     if (currentRecap(store, session)?.turnSeq === anchor.seq) return
@@ -656,7 +656,7 @@ export function apply(ctx: AppContext, config: Config): void {
   function armAutomatic(session: Session): void {
     clearTimer(session.id)
     if (!config.enabled || !awaySessions.has(session.id)) return
-    const events = session.events
+    const events = session.snapshotEvents()
     if (hasOpenTurn(events) || turnCount(events) < config.minTurns) return
     const anchor = lastTurnEnd(events)
     if (anchor === undefined || anchor.data.reason.kind !== 'completed') return
@@ -725,10 +725,10 @@ export function apply(ctx: AppContext, config: Config): void {
       description: 'Generate a session recap: current task, progress, key findings, next action.',
       handler: async ({ agent, signal }: CommandInvocation) => {
         const session = agent.session
-        if (hasOpenTurn(session.events)) {
+        if (hasOpenTurn(session.snapshotEvents())) {
           return { kind: 'error' as const, text: 'Recap failed: wait until the current turn finishes, then run /recap again' }
         }
-        const invoked = lastTurnEnd(session.events)
+        const invoked = lastTurnEnd(session.snapshotEvents())
         const controller = beginCall(session.id, activeCalls, activeBySession)
         if (controller === undefined) {
           return { kind: 'error' as const, text: 'Recap failed: another recap is already generating' }
@@ -738,7 +738,7 @@ export function apply(ctx: AppContext, config: Config): void {
         else signal.addEventListener('abort', onOuterAbort, { once: true })
         try {
           const text = await generateRecap(ctx, config, session, controller.signal)
-          const nowEvents = session.events
+          const nowEvents = session.snapshotEvents()
           const nowEnd = lastTurnEnd(nowEvents)
           if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
             return { kind: 'error' as const, text: 'Recap failed: the session changed while generating; run /recap again' }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-shell shim for the Windows-native DSH build.
+# Cross-shell shim: prefer the current environment's native Node runtime.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -7,7 +7,7 @@ ROOT_MNT="$(dirname "$SCRIPT_DIR")"
 
 NODE_EXE="${NODE_EXE:-}"
 if [ -z "$NODE_EXE" ]; then
-  NODE_EXE="$(command -v node.exe 2>/dev/null || command -v node 2>/dev/null || true)"
+  NODE_EXE="$(command -v node 2>/dev/null || command -v node.exe 2>/dev/null || true)"
 fi
 if [ -z "$NODE_EXE" ]; then
   echo "build: cannot locate node or node.exe" >&2

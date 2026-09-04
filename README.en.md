@@ -4,7 +4,7 @@
 
 **A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-Current version: **0.0.4**
+Current version: **0.1.5**, targeting DSH **0.1.2-rc.1**. Session history uses `snapshotEvents()`, and builds run directly through Node on Windows and Linux.
 
 ## Why this plugin exists
 
@@ -95,8 +95,8 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 
 | Item | Version or scope |
 | --- | --- |
-| dsh-session-recap | `0.0.4` (`package.json`) |
-| DeepSeek Harness packages | `>=0.1.1-rc.2 <1` |
+| dsh-session-recap | `0.1.5` (`package.json`) |
+| DeepSeek Harness packages | `0.1.2-rc.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
 
