@@ -3,12 +3,25 @@
 import assert from 'node:assert/strict'
 import { Config, internals } from '../lib/index.js'
 
-const { frameTranscript, systemPrompt, languageDirective, stripThink, trimToSentence } = internals
+const {
+  frameTranscript,
+  framedTranscriptHasContent,
+  systemPrompt,
+  languageDirective,
+  stripThink,
+  trimToSentence,
+  completeSentences,
+  updateClientPresence,
+  presenceIsAway,
+  nextPresenceExpiry,
+  allowedLoopbackRequest,
+} = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', source: { kind: 'model', provider: 'p', model: 'm' }, content: [{ type: 'text', text }, { type: 'tool-call', toolCallId: 'c1', name: 'bash', input: {} }] })
 // dsh records every tool result as its own user-role message holding raw output
 const toolResult = (text) => ({ role: 'user', source: { kind: 'tool', callId: 'c1' }, content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text }], isError: false }] })
+const compact = (text) => ({ role: 'user', source: { kind: 'plugin', plugin: 'compact', compactionId: 'c1' }, content: [{ type: 'text', text }] })
 
 let checks = 0
 const check = (name, fn) => { fn(); checks += 1; console.log('PASS ' + name) }
@@ -34,6 +47,23 @@ check('goal anchors on the newest request, not the session opening', () => {
   assert.ok(transcript.includes('当前任务'))
   assert.ok(!transcript.includes('开场目标'))
   assert.equal(parsed.goal, '当前任务：修复 recap 会话漂移')
+})
+
+check('compact checkpoint is retained as trusted history, not a user entry', () => {
+  const parsed = JSON.parse(frameTranscript([
+    compact('历史任务：修复 PAYMENT_ANCHOR_42；下一步验证幂等键。'),
+    assistant('正在核对测试结果。'),
+  ], 5, 24000))
+  assert.match(parsed.historySummary, /PAYMENT_ANCHOR_42/)
+  assert.equal(parsed.recent.some((entry) => entry.role === 'user'), false)
+  assert.equal(framedTranscriptHasContent(JSON.stringify(parsed)), true)
+})
+
+check('filtered empty transcript is rejected after framing', () => {
+  const framed = frameTranscript([
+    { role: 'user', source: { kind: 'plugin', plugin: 'other' }, content: [{ type: 'text', text: 'injected only' }] },
+  ], 5, 24000)
+  assert.equal(framedTranscriptHasContent(framed), false)
 })
 
 check('transcript stays valid JSON within the UTF-8 byte bound', () => {
@@ -65,6 +95,37 @@ check('trimToSentence keeps only complete sentences, never cuts decimals', () =>
   assert.equal(trimToSentence('耗时 1.5 秒的模板路径'), '耗时 1.5 秒的模板路径')
   assert.equal(trimToSentence('fixed it. then ran the next 1.5 sec test'), 'fixed it.')
   assert.equal(trimToSentence('no terminator at all'), 'no terminator at all')
+})
+
+check('max-token salvage requires and keeps complete sentences', () => {
+  assert.equal(completeSentences('已完成第一步。下一句被截断'), '已完成第一步。')
+  assert.equal(completeSentences('没有完整句子'), undefined)
+  assert.equal(completeSentences('Complete answer.'), 'Complete answer.')
+})
+
+check('same-origin validation rejects cross-port and origin-less writes', () => {
+  const request = (origin) => ({
+    socket: { remoteAddress: '127.0.0.1' },
+    headers: { host: 'localhost:3080', ...(origin === undefined ? {} : { origin }) },
+  })
+  assert.equal(allowedLoopbackRequest(request('http://localhost:3080'), true), true)
+  assert.equal(allowedLoopbackRequest(request('http://localhost:5173'), true), false)
+  assert.equal(allowedLoopbackRequest(request(undefined), true), false)
+  assert.equal(allowedLoopbackRequest(request(undefined), false), true)
+})
+
+check('presence is aggregated per client and ignores stale events', () => {
+  const clients = new Map()
+  const now = 1000
+  assert.equal(updateClientPresence(clients, 'tab-a', 1, true, now), true)
+  assert.equal(updateClientPresence(clients, 'tab-b', 1, true, now), true)
+  assert.equal(updateClientPresence(clients, 'tab-b', 2, false, now + 1), true)
+  assert.equal(presenceIsAway(clients, now + 2), false, 'tab A keeps the Session active')
+  assert.equal(updateClientPresence(clients, 'tab-a', 0, false, now + 3), false, 'stale cleanup is ignored')
+  assert.equal(presenceIsAway(clients, now + 4), false)
+  const expiresAt = nextPresenceExpiry(clients)
+  assert.equal(typeof expiresAt, 'number')
+  assert.equal(presenceIsAway(clients, expiresAt), true, 'lost active client expires by lease')
 })
 
 check('transcript keeps only real human input as user entries', () => {

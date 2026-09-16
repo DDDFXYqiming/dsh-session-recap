@@ -10,13 +10,12 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     var react = require('react')
-    // Built-in menu glyph from the shell's platform module table; a module
-    // table without it costs the glyph, never the banner.
-    var RecapIcon
-    try { RecapIcon = require('@deepseek-ai/dsh-client-ui-primitives').IconListPenOutline16 } catch (_) { RecapIcon = undefined }
     var NS = '@dsh-external/dsh-session-recap'
     var POLL_MS = 2000
     var POLL_TIMEOUT_MS = 4000
+    var PRESENCE_HEARTBEAT_MS = 15000
+    var presenceClientId = createPresenceClientId()
+    var presenceSequence = 0
     var dismissedStoragePrefix = 'dsh-session-recap:dismissed:'
     var legacyDismissedStoragePrefix = dismissedStoragePrefix
 
@@ -95,9 +94,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // Manual `/recap` runs through the host route: in an interactive profile the
-    // slash row is a client contribution, so there is no command result to render.
-    // Its outcome — a refusal or a provider failure — is shown in this same card.
+    // Manual `/recap` runs through the host route when the host command is
+    // decorated by this client. Its outcome is shown in this same card.
     var notices = new Map()
     var noticeWatchers = new Set()
     function publishNotice(sessionId, message) {
@@ -108,21 +106,11 @@ window.__ModuleLoader__.load({
     }
     // Live banner polls, so a manual recap lands without waiting for the next tick.
     var pollers = new Map()
-    // Whether the host has released the `recap` slash name to this bundle. The
-    // contribution stays unavailable until it has: two owners of one name make
-    // ui-commands fail the whole command menu, so the safe side of the race is
-    // "keep the host's own row".
-    var hostReleased = false
-
-    function adoptHostRecap(body) {
-      hostReleased = body !== null && body.hostRecap === false
-    }
-
-    function probeHostRecap() {
-      fetch('/api/dsh-session-recap?action=capabilities', { credentials: 'same-origin', cache: 'no-store' })
-        .then(function (response) { return response.ok ? response.json().catch(function () { return null }) : null })
-        .then(adoptHostRecap)
-        .catch(function () {})
+    function createPresenceClientId() {
+      try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+      } catch (_) {}
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
     }
 
     function requestManualRecap(session, t) {
@@ -151,7 +139,11 @@ window.__ModuleLoader__.load({
 
     function reportPresence(sessionId, active) {
       if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
-      var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(String(sessionId)) + '&presence=' + (active ? 'active' : 'away')
+      presenceSequence += 1
+      var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(String(sessionId))
+        + '&presence=' + (active ? 'active' : 'away')
+        + '&clientId=' + encodeURIComponent(presenceClientId)
+        + '&seq=' + String(presenceSequence)
       try {
         fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true }).catch(function () {})
       } catch (_) {}
@@ -241,7 +233,6 @@ window.__ModuleLoader__.load({
             })
             .then(function (body) {
               if (cancelled || body === null) return
-              adoptHostRecap(body)
               setLoadedRecap({ owner: sessionKey, value: validRecap(body.recap) })
             })
             .catch(function () {})
@@ -298,12 +289,14 @@ window.__ModuleLoader__.load({
           reportPresence(sessionKey, false)
         }
         syncPresence()
+        var heartbeat = setInterval(syncPresence, PRESENCE_HEARTBEAT_MS)
         document.addEventListener('visibilitychange', syncPresence)
         window.addEventListener('focus', syncPresence)
         window.addEventListener('blur', markAway)
         window.addEventListener('pagehide', markAway)
         return function () {
           document.removeEventListener('visibilitychange', syncPresence)
+          clearInterval(heartbeat)
           window.removeEventListener('focus', syncPresence)
           window.removeEventListener('blur', markAway)
           window.removeEventListener('pagehide', markAway)
@@ -347,39 +340,27 @@ window.__ModuleLoader__.load({
       failed: 'Recap failed',
       dismiss: 'Dismiss session recap',
       close: 'Dismiss',
-      'command.label': 'Recap',
-      'command.description': 'Generate a session recap: current task, progress, and next action',
     }
     var zh = {
       badge: '回顾',
       failed: '回顾失败',
       dismiss: '关闭会话回顾',
       close: '关闭',
-      'command.label': '回顾',
-      'command.description': '生成会话回顾：当前任务、已完成进展和下一步',
     }
     var inject = ['locale', 'slots']
 
     function apply(ctx) {
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-session-recap: dictionaries')
       var t = ctx.locale.bind(NS)
-      // The slash row is client-owned: only a client contribution can carry the
-      // built-in row face (glyph, localized label and description). The host half
-      // releases its `/recap` command in interactive profiles, and this bundle
-      // claims the name only once a host reports it free (`available` below), so
-      // a half-reloaded pair keeps the host row instead of breaking the menu. A
-      // deferred inject keeps the banner alive on a host without that surface.
-      probeHostRecap()
+      // Keep one owner for /recap at all times. The host command owns the row;
+      // this official decoration changes only its bare/menu action.
       ctx.inject(['commandUi'], function (scope) {
         var command = scope.get('commandUi')
         if (command === undefined) return
         scope.effect(function () {
-          return command.register({
+          return command.decorate({
             name: 'recap',
-            label: function () { return t('command.label') },
-            description: function () { return t('command.description') },
-            icon: RecapIcon,
-            available: function () { return hostReleased },
+            available: function () { return true },
             ui: {
               kind: 'action',
               run: function (session) { requestManualRecap(session, t) },

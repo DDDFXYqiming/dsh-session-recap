@@ -35,7 +35,7 @@ test('manual recap uses rc.1 snapshots, publishes a sidecar and rejects open tur
   try {
     apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
     const invoke = () => command.handler({ agent: { session }, signal: new AbortController().signal })
-    assert.deepEqual(await invoke(), { kind: 'success' })
+    assert.deepEqual(await invoke(), { kind: 'success', text: '兼容测试通过。' })
     assert.ok(snapshots >= 3)
     assert.equal(calls, 1)
     const stored = JSON.parse(readFileSync(join(root, 'plugin-data/dsh-session-recap/snapshot-only.json'), 'utf8'))
@@ -51,14 +51,84 @@ test('manual recap uses rc.1 snapshots, publishes a sidecar and rejects open tur
   }
 })
 
+test('max-token output with a complete sentence is delivered without retry', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recap-max-token-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  const { apply, Config } = await import('../lib/index.js')
+  let command
+  let calls = 0
+  const dispose = []
+  const ctx = {
+    on() {},
+    effect(setup) { dispose.push(setup()) },
+    inject(names, setup) { if (names.includes('commands')) setup(ctx) },
+    commands: { register(value) { command = value } },
+    llm: { async *stream() {
+      calls++
+      yield { type: 'text-delta', index: 0, text: '已有完整正文。下一步继续验证。' }
+      yield { type: 'finish', reason: { kind: 'max-tokens' } }
+    } },
+  }
+  const session = {
+    id: 'max-token-complete',
+    snapshotEvents() { return [] },
+    deriveMessages() { return [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '生成回顾' }] }] },
+  }
+  try {
+    apply(ctx, Config({ provider: 'test-provider', model: 'test-model', maxOutputTokens: 4096 }))
+    const result = await command.handler({ agent: { session }, signal: new AbortController().signal })
+    assert.deepEqual(result, { kind: 'success', text: '已有完整正文。下一步继续验证。' })
+    assert.equal(calls, 1)
+  } finally {
+    for (const fn of dispose) fn?.()
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('filtered-empty transcript fails before calling the model', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'recap-empty-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  const { apply, Config } = await import('../lib/index.js')
+  let command
+  let calls = 0
+  const dispose = []
+  const ctx = {
+    on() {},
+    effect(setup) { dispose.push(setup()) },
+    inject(names, setup) { if (names.includes('commands')) setup(ctx) },
+    commands: { register(value) { command = value } },
+    llm: { async *stream() { calls++; yield { type: 'finish', reason: { kind: 'stop' } } } },
+  }
+  const session = {
+    id: 'filtered-empty',
+    snapshotEvents() { return [] },
+    deriveMessages() {
+      return [{ role: 'user', source: { kind: 'plugin', plugin: 'other' }, content: [{ type: 'text', text: 'injected only' }] }]
+    },
+  }
+  try {
+    apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
+    const result = await command.handler({ agent: { session }, signal: new AbortController().signal })
+    assert.equal(result.kind, 'error')
+    assert.match(result.text, /no usable conversation messages/)
+    assert.equal(calls, 0)
+  } finally {
+    for (const fn of dispose) fn?.()
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 /**
- * An interactive profile owns the slash name on the client: only a client
- * contribution can carry the built-in menu row face (glyph, localized label and
- * description), and a host command of the same name would fail the whole menu.
- * So the Web profile releases the host command — in either inject order — and
- * manual recaps arrive through the route action instead.
+ * The host always owns the slash name. The Web client decorates that command's
+ * bare action, so every inject order keeps exactly one catalog owner.
  */
-test('a web profile releases the slash name and generates manual recaps through the route', async () => {
+test('a web profile keeps the host slash command and generates manual recaps through the route', async () => {
   const scenario = async (order) => {
     const root = mkdtempSync(join(tmpdir(), 'recap-web-'))
     const previous = process.env.DSH_HOME
@@ -102,11 +172,17 @@ test('a web profile releases the slash name and generates manual recaps through 
       apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
       assert.equal(pending.size, 2, 'both capability injects are requested')
       for (const kind of order) pending.get(kind)(ctx)
-      assert.equal(command, undefined, order.join('>' ) + ': the host command is not registered in a web profile')
+      assert.equal(typeof command?.handler, 'function', order.join('>') + ': the host command remains registered')
       assert.equal(typeof route, 'function', order.join('>') + ': the web route is mounted')
-      const probe = { ...req, method: 'GET', url: '/api/dsh-session-recap?action=capabilities' }
-      await route(probe, res)
-      assert.deepEqual(responses.shift(), { status: 200, body: { hostRecap: false } })
+      await route({ ...req, method: 'GET', url: '/api/dsh-session-recap?sessionId=' + session.id }, res)
+      assert.deepEqual(responses.shift(), { status: 200, body: { recap: null } })
+      await route({ ...req, headers: { ...req.headers, origin: 'http://localhost:5173' } }, res)
+      assert.deepEqual(responses.shift(), { status: 403, body: { error: 'forbidden origin' } })
+      assert.equal(calls, 0, 'cross-origin write never starts generation')
+      const { origin: _origin, ...headersWithoutOrigin } = req.headers
+      await route({ ...req, headers: headersWithoutOrigin }, res)
+      assert.deepEqual(responses.shift(), { status: 403, body: { error: 'forbidden origin' } })
+      assert.equal(calls, 0, 'origin-less write never starts generation')
       await route(req, res)
       assert.deepEqual(responses, [{ status: 200, body: { ok: true } }])
       assert.equal(calls, 1)

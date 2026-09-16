@@ -13,6 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type LlmService from '@deepseek-ai/dsh-llm';
 import type { Message } from '@deepseek-ai/dsh-llm';
+import type { IncomingMessage } from 'node:http';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "@dsh-external/dsh-session-recap";
 /** `llm` is accessed directly by the host generation paths. */
@@ -76,12 +77,19 @@ export declare const Config: z<Schemastery.ObjectS<{
 type AppContext = Context & {
     llm: LlmService;
 };
+type ClientPresence = {
+    active: boolean;
+    sequence: number;
+    expiresAt: number;
+};
 /** Extract readable context from provider-neutral message content. */
 declare function contentText(content: unknown): string;
 /** Keep both the beginning (goal) and end (next action) when bounding text. */
 declare function shortenText(text: string, maxChars: number): string;
 /** Fall back to the last complete sentence so a cut recap never ends mid-sentence. */
 declare function trimToSentence(text: string): string;
+/** Return only complete sentences; unlike trimToSentence, no terminator means no salvage. */
+declare function completeSentences(text: string): string | undefined;
 /**
  * Older model services emit chain-of-thought inline in the text channel
  * as think / thinking / thought tag blocks instead of using a separate
@@ -90,17 +98,8 @@ declare function trimToSentence(text: string): string;
  * payloads strip them, which once silently broke this module's tests.)
  */
 declare function stripThink(text: string): string;
-/**
- * Build a bounded, valid JSON transcript from recent conversation messages.
- * Tool-result messages are dropped before windowing: dsh records every tool
- * result as its own user-role message holding raw command output, so left in,
- * `recentMessages` would count tool noise instead of conversation and the
- * byte budget would fill with command output. `goal` anchors on the NEWEST
- * user request (not the session opening) and is only injected when it has
- * fallen out of the recent window: by the time the opening request leaves the
- * window it describes work that is long finished.
- */
 declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
+declare function framedTranscriptHasContent(framed: string): boolean;
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
 /**
  * Closing directive appended after the transcript. The plugin quotes up to
@@ -116,11 +115,21 @@ export declare const internals: {
     shortenText: typeof shortenText;
     stripThink: typeof stripThink;
     trimToSentence: typeof trimToSentence;
+    completeSentences: typeof completeSentences;
     frameTranscript: typeof frameTranscript;
+    framedTranscriptHasContent: typeof framedTranscriptHasContent;
+    updateClientPresence: typeof updateClientPresence;
+    presenceIsAway: typeof presenceIsAway;
+    nextPresenceExpiry: typeof nextPresenceExpiry;
+    allowedLoopbackRequest: typeof allowedLoopbackRequest;
     systemPrompt: typeof systemPrompt;
     languageDirective: typeof languageDirective;
 };
 /** Bounded away-summary instruction sent to the auxiliary model. */
 declare function systemPrompt(): string;
+declare function allowedLoopbackRequest(req: IncomingMessage, requireOrigin: boolean): boolean;
+declare function updateClientPresence(clients: Map<string, ClientPresence>, clientId: string, sequence: number, active: boolean, now: number): boolean;
+declare function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean;
+declare function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | undefined;
 export declare function apply(ctx: AppContext, config: Config): void;
 export {};

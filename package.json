@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-session-recap",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Session recap plugin for DeepSeek Harness (automatic away recaps)",
   "author": "DDDFXYqiming",
   "license": "MIT",
@@ -63,6 +63,7 @@
     "typecheck": "node scripts/build.mjs --no-emit",
     "build:client": "node scripts/build.mjs --client-only",
     "test": "node test/self-check.mjs && node --test test/session-api.test.mjs test/client-command.test.mjs",
+    "test:upstream": "node --test test/upstream-source.test.mjs",
     "prepare": "node scripts/build.mjs"
   },
   "peerDependencies": {
@@ -81,7 +82,6 @@
     "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-commands": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-rc.1",
     "@deepseek-ai/dsh-client-locale": "0.1.2-rc.1",
     "react": "^18.2.0"
   },
@@ -129,9 +129,6 @@
       "optional": true
     },
     "@deepseek-ai/dsh-client-ui-commands": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-ui-primitives": {
       "optional": true
     },
     "@deepseek-ai/dsh-client-locale": {

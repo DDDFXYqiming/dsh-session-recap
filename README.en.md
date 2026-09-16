@@ -4,7 +4,7 @@
 
 **A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-Current version: **0.1.6**, targeting DSH **0.1.2-rc.1**. Session history uses `snapshotEvents()`, and builds run directly through Node on Windows and Linux.
+Current version: **0.1.7**, targeting DSH **0.1.2-rc.1** and source-checked against official GitHub `master@0d1f500`. Session history uses `snapshotEvents()`, and builds run directly through Node on Windows and Linux.
 
 ## Why this plugin exists
 
@@ -15,24 +15,24 @@ People step away from the screen for all sorts of reasons, and the session is st
 - Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
 - By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn. These two gates keep a brief distraction from producing a pointless recap.
 - Provides `/recap` on demand through the same recap card; disabling automatic recaps does not disable the command.
-- In an interactive (Web) profile the `/recap` slash-menu row is a client contribution, so it carries the same face as the built-in commands: glyph, localized label, and localized description. The client takes that name over only after the host confirms it released it (an `action=capabilities` probe plus the poll's receipt), so reloading either half alone can never produce two owners of one slash name — a collision fails the whole menu. A profile without the Web client keeps `/recap` as a host command.
+- The host always owns `/recap`; the Web client uses official `commandUi.decorate()` only for the bare command's card action, so hot reload never creates two owners of one name. Without a Web client, the command returns the recap text directly.
 - Shows a failed manual recap in that same card (localized failure badge plus the error text) instead of a command-result row.
 - Writes the recap in the language the user writes in; the English prompt does not force English output.
 - Legacy-model-service compatible: chain-of-thought inlined into the text as think / thinking / thought tag blocks is stripped before it reaches the recap input or the recap card.
 - Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
+- Aggregates presence by Session and page client, with monotonic sequence numbers, heartbeats, and leases, so closing one background tab cannot override a foreground tab.
 - Includes English and Simplified Chinese UI labels; reuses the session's latest effective provider/model by default, with optional overrides for model, reasoning effort, temperature, output budget, stop sequences, and timeout.
 - Stores recap state in a plugin sidecar instead of adding plugin-defined events to the DSH append-only session log.
-- In a Web profile the `/recap` row's title, description, and glyph follow the interface language (Chinese/English) and render through the same path as the built-in commands.
 
 ## How it works
 
-1. The Web client maps window focus/blur, document visibility, and session switches to `active` / `away` presence for the current session.
+1. Each Web page gets a client ID and reports sequenced `active` / `away` presence for focus, visibility, and session switches. Heartbeats renew a bounded lease; the Host marks the Session away only when every live client is away.
 2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied. All three conditions must hold before any request goes out, so a brief distraction triggers nothing.
-3. The plugin drops tool-result messages before framing bounded input (raw command output is not intent), anchors the current task on the newest user request (never restating a long-finished opening), and makes one independent auxiliary LLM request for a plain-text current-task / progress / next-step recap of at most 40 words in one or two sentences.
+3. The plugin drops tool-result messages, retains the official compact checkpoint as an explicitly labeled history summary, and anchors the current task on the newest real-user request. The history summary is never treated as the user's own language sample.
 4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded. What you see on return always matches the current progress.
-5. Automatic and manual `/recap` results are stored in a local sidecar and served to the card through a loopback-only, same-origin Web route; the Web client's manual `/recap` starts host generation through that route's `action=generate`. Recap text is not appended to the conversation message history.
+5. Automatic and manual `/recap` results are stored in a local sidecar. Web writes require the same protocol, host, and port as DSH; headless commands deliver the result through `CommandResult.text`. Neither path appends recap text to conversation history.
 
 ## Installation
 
@@ -74,7 +74,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
     maxChars: 400        # recap text limit
     maxInputChars: 24000 # recap input limit in bytes
-    maxOutputTokens: 1024 # recap-model output token budget (reasoning models spend it on thinking too)
+    maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000
     provider: ''         # empty: reuse the session's latest effective provider
     model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
@@ -83,7 +83,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     stopSequences: []    # optional stop-sequence list
 ```
 
-`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. When the recap follows a reasoning model, thinking tokens spend the `maxOutputTokens` budget too: an exhausted budget with salvageable text yields that truncated recap; an empty one triggers a single retry with a 4x budget (capped at 4096) before failing — then raise `maxOutputTokens` further or pin a non-thinking model via `provider`+`model`. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
+`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. When a reasoning model exhausts `maxOutputTokens`, the plugin immediately delivers any complete sentences already produced; it retries once at 4x budget (capped at 4096) only when no complete sentence exists. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
 
 ## Storage layout
 
@@ -98,7 +98,7 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 
 | Item | Version or scope |
 | --- | --- |
-| dsh-session-recap | `0.1.6` (`package.json`) |
+| dsh-session-recap | `0.1.7` (`package.json`) |
 | DeepSeek Harness packages | `0.1.2-rc.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
@@ -110,6 +110,7 @@ npm install
 npm run typecheck
 npm run build
 npm test
+npm run test:upstream # set DSH_UPSTREAM_ROOT to validate the pinned GitHub master SHA
 npm run build:client
 npm pack
 ```

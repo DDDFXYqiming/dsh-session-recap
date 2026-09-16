@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前版本：**0.1.6**（适配 DSH `0.1.2-rc.1`）。事件读取改用 `Session.snapshotEvents()`；构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前版本：**0.1.7**（适配 DSH `0.1.2-rc.1`，并以官方 GitHub `master@0d1f500` 做源码兼容核对）。事件读取改用 `Session.snapshotEvents()`；构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -15,24 +15,24 @@
 - 仅在 Web 窗口失焦或切走当前会话时后台生成；窗口保持聚焦时，单纯空闲不会调用模型。
 - 默认要求最后一个完成 turn 已过去 3 分钟，且会话至少有 3 个完成 turn，同一 turn 不会连续生成两次。这两道门槛挡住了短暂分心带来的无意义回顾。
 - `/recap` 随时按需生成，并在同一张回顾卡片中显示；关闭自动回顾不影响手动命令。
-- 交互式（Web）profile 里 `/recap` 的斜杠菜单行是客户端贡献命令，与内建命令同一副面孔：图标、本地化标题、本地化说明。客户端只在宿主确认交出该命令名之后才接管这一行（`action=capabilities` 探测 + 轮询回执），所以任一侧先重载都不会出现同名冲突——同名冲突会让整个斜杠菜单失效。没有 Web 客户端的 profile 仍由宿主命令提供 `/recap`。
+- `/recap` 始终由宿主命令持有；Web 客户端只用官方 `commandUi.decorate()` 接管裸命令的卡片动作，因此热更新期间也不会出现两个同名所有者。没有 Web 客户端时，命令结果会直接返回回顾正文。
 - 手动回顾失败时，错误直接显示在同一张卡片里（本地化的失败角标加错误正文），不再产生命令结果行。
 - 回顾正文跟随会话里用户消息的语言，英文提示词不会强制英文输出。
 - 兼容旧模型服务：思考过程以 think / thinking / thought 标签块内联在正文里时（无独立 reasoning 通道），这些块在进入回顾输入和回顾卡片前都会被剥掉。
 - 自动回顾以带“回顾 / Recap”标题和关闭按钮的卡片显示在 Web 对话输入框上方，最长 400 字符。
 - 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回，横幅不会重新出现。
 - 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
+- 多标签页 presence 按“会话＋页面客户端”聚合，并带递增序号、心跳和有限期租约；关闭一个后台标签不会覆盖仍在前台使用的页面。
 - 中英文界面标签；默认复用当前会话最近实际使用的 provider/model，也可覆盖模型、思考等级、temperature、输出预算、停止词和超时等参数。
 - 回顾状态写入插件 sidecar，不向 DSH append-only session log 添加插件自定义事件。
-- Web profile 里 `/recap` 行的标题、说明和图标跟随界面语言（中/英），与内建命令同一套渲染。
 
 ## 工作方式
 
-1. Web client 把窗口 focus/blur、页面可见性和会话切换映射为当前会话的 `active` / `away` 状态。
+1. Web client 为每个页面实例分配 clientId，把 focus/blur、页面可见性和会话切换映射为带序号的 `active` / `away` 状态，并用心跳续租；Host 只在所有有效客户端都离开时判定会话 away。
 2. Host 只在会话处于 `away`、最后一个完成 `turn/end` 已超过 `idleMs`、完成轮数达到 `minTurns` 时启动自动回顾。三个条件同时满足才发起请求，短暂分心不会触发。
-3. 插件构造有界输入时先剔除工具结果消息（原始命令输出不算意图），再以最近一条用户请求锚定当前任务（不再复述早已完成的开场请求），通过一次独立辅助 LLM 请求生成不超过 40 词、一到两句的纯文本回顾，内容是当前任务、已完成进展和下一步。
+3. 插件构造有界输入时先剔除工具结果消息（原始命令输出不算意图），保留官方 compact checkpoint 为单独标注的历史摘要，再以最近一条真实用户请求锚定当前任务；历史摘要不会被当成人类原话参与语言判断。
 4. 如果会话在请求期间开始新 turn、完成了更新的 turn，或被销毁，旧请求的结果不会提交。你回来后看到的结果始终和当前进度对得上。
-5. 自动回顾和手动 `/recap` 都把当前结果保存在本地 sidecar，由仅限 loopback 的同源 Web route 提供给卡片；Web 客户端的手动 `/recap` 同样经这条 route 的 `action=generate` 触发宿主生成。不会向会话消息历史追加摘要正文。
+5. 自动回顾和手动 `/recap` 都把当前结果保存在本地 sidecar。Web 写请求必须来自与 DSH 相同的协议、主机和端口；无浏览器命令则通过 `CommandResult.text` 直接交付正文。两者都不会向会话消息历史追加摘要。
 
 ## 安装
 
@@ -74,7 +74,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
     maxChars: 400        # 回顾文本上限
     maxInputChars: 24000 # 回顾输入上限（字节）
-    maxOutputTokens: 1024 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
+    maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
     timeoutMs: 30000
     provider: ''         # 留空：复用会话最近实际使用的 provider
     model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
@@ -83,7 +83,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     stopSequences: []    # 可选停止词列表
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算：预算耗尽但已有文本时直接使用截断结果；没有文本时自动按 4 倍（上限 4096）预算重试一次，仍失败才报错——此时可继续调大 `maxOutputTokens`，或用 `provider`+`model` 为回顾固定一个非思考模型。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算：预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
 ## 存储布局
 
@@ -98,7 +98,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 | 项目 | 版本或范围 |
 | --- | --- |
-| dsh-session-recap | `0.1.6`（`package.json`） |
+| dsh-session-recap | `0.1.7`（`package.json`） |
 | DeepSeek Harness packages | `0.1.2-rc.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务 |
@@ -110,6 +110,7 @@ npm install
 npm run typecheck
 npm run build
 npm test
+npm run test:upstream # 需设置 DSH_UPSTREAM_ROOT，核对固定 GitHub master SHA
 npm run build:client
 npm pack
 ```

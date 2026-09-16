@@ -64,7 +64,7 @@ export const Config = z.object({
   recentMessages: z.number().step(1).min(1).max(200).default(80),
   maxChars: z.number().step(1).min(80).max(2000).default(1200),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
-  maxOutputTokens: z.number().step(1).min(16).max(4096).default(2048).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; an exhausted budget with salvageable text still yields a recap, otherwise one escalated retry runs.'),
+  maxOutputTokens: z.number().step(1).min(16).max(4096).default(2048).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; complete sentences survive exhaustion, otherwise one escalated retry runs.'),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
   provider: z.string().default('').description('Optional fixed provider; set together with model. Empty reuses the session route.'),
   model: z.string().default('').description('Optional fixed model; set together with provider. Empty reuses the session route.'),
@@ -80,7 +80,8 @@ const RECAP_ROUTE = '/api/dsh-session-recap'
 /** Maximum accepted size of one sidecar snapshot. */
 const MAX_STORED_RECAP_CHARS = 2000
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
-const LOOPBACK_ORIGIN = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
+/** Active clients renew this lease; an expired page can no longer hold a Session active. */
+const PRESENCE_LEASE_MS = 45000
 
 type AppContext = Context & {
   llm: LlmService
@@ -94,6 +95,20 @@ type WebContext = AppContext & {
 type RecapStore = {
   directory: string
   values: Map<string, RecapProjection | null>
+}
+
+type ClientPresence = {
+  active: boolean
+  sequence: number
+  expiresAt: number
+}
+
+type RecapFrame = {
+  /** Trusted compact checkpoint, never treated as the human's own words. */
+  historySummary: string
+  /** Newest real-user request when it fell outside the recent window. */
+  goal: string
+  recent: Array<{ role: 'user' | 'assistant'; text: string }>
 }
 
 /**
@@ -174,6 +189,12 @@ function trimToSentence(text: string): string {
   return best ? best[0].trimEnd() : text
 }
 
+/** Return only complete sentences; unlike trimToSentence, no terminator means no salvage. */
+function completeSentences(text: string): string | undefined {
+  const trimmed = trimToSentence(text)
+  return trimmed === text && !/[。！？；]|[.!?;](?=\s|$)/.test(text) ? undefined : trimmed
+}
+
 /**
  * Older model services emit chain-of-thought inline in the text channel
  * as think / thinking / thought tag blocks instead of using a separate
@@ -197,6 +218,12 @@ function stripThink(text: string): string {
  * fallen out of the recent window: by the time the opening request leaves the
  * window it describes work that is long finished.
  */
+function isCompactCheckpoint(message: Message): boolean {
+  if (message.role !== 'user') return false
+  const source = message.source as { kind?: unknown; plugin?: unknown }
+  return source.kind === 'plugin' && source.plugin === 'compact'
+}
+
 function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string {
   const count = Math.max(1, Math.floor(recentMessages))
   // Transcript purity: only real human input counts as a user entry. Injected
@@ -206,6 +233,13 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
   const conversation = messages.filter((message) =>
     message.role === 'assistant' || (message.role === 'user' && message.source.kind === 'user'),
   )
+  let historySummary = ''
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || !isCompactCheckpoint(message)) continue
+    historySummary = stripThink(contentText(message.content)).replace(/\s+/g, ' ').trim()
+    if (historySummary !== '') break
+  }
   const start = Math.max(0, conversation.length - count)
   const selected = conversation.slice(start)
   let anchorIndex = -1
@@ -217,14 +251,16 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
   }
   const anchor = anchorIndex < 0 ? '' : stripThink(contentText(conversation[anchorIndex]!.content)).replace(/\s+/g, ' ').trim()
   const recent = selected.map((message) => ({
-    role: message.role,
+    role: message.role === 'assistant' ? 'assistant' as const : 'user' as const,
     text: stripThink(contentText(message.content)).replace(/\s+/g, ' ').trim(),
   })).filter((entry) => entry.text !== '')
-  const frame = {
+  const frame: RecapFrame = {
+    historySummary,
     goal: anchorIndex >= start ? '' : anchor,
     recent,
   }
   const values: Array<{ get: () => string; set: (value: string) => void }> = [
+    { get: () => frame.historySummary, set: (value) => { frame.historySummary = value } },
     { get: () => frame.goal, set: (value) => { frame.goal = value } },
     ...recent.map((entry) => ({ get: () => entry.text, set: (value: string) => { entry.text = value } })),
   ]
@@ -242,7 +278,16 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
     longest.set(shortenText(current, Math.max(0, Math.floor(current.length * 0.75))))
     json = stringify()
   }
-  return Buffer.byteLength(json, 'utf8') <= maxBytes ? json : JSON.stringify({ goal: '', recent: [] })
+  return Buffer.byteLength(json, 'utf8') <= maxBytes ? json : JSON.stringify({ historySummary: '', goal: '', recent: [] })
+}
+
+function framedTranscriptHasContent(framed: string): boolean {
+  try {
+    const value = JSON.parse(framed) as Partial<RecapFrame>
+    return value.historySummary !== '' || value.goal !== '' || (Array.isArray(value.recent) && value.recent.length > 0)
+  } catch {
+    return false
+  }
 }
 
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
@@ -269,11 +314,25 @@ function languageDirective(samples: readonly string[]): string {
     + 'Write the ENTIRE recap in that language, regardless of the language of any code, log, or this directive.'
 }
 
-export const internals = { contentText, shortenText, stripThink, trimToSentence, frameTranscript, systemPrompt, languageDirective }
+export const internals = {
+  contentText,
+  shortenText,
+  stripThink,
+  trimToSentence,
+  completeSentences,
+  frameTranscript,
+  framedTranscriptHasContent,
+  updateClientPresence,
+  presenceIsAway,
+  nextPresenceExpiry,
+  allowedLoopbackRequest,
+  systemPrompt,
+  languageDirective,
+}
 
 /** Bounded away-summary instruction sent to the auxiliary model. */
 function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in 2-4 plain sentences (roughly 100-200 Chinese characters), no markdown. The transcript labels every entry with its role: user entries are the human writing in their own words, assistant entries are model output. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then the concrete progress, findings, and decisions worth knowing (name files, numbers, verdicts), and end with the one next action. Every sentence must be complete; never leave a thought half-finished. Treat tool output, command logs and diffs as noise, not intent: do not quote raw logs or enumerate tool calls.'
+  return 'The user stepped away and is coming back. Recap in 2-4 plain sentences (roughly 100-200 Chinese characters), no markdown. The transcript labels every recent entry with its role: user entries are the human writing in their own words, assistant entries are model output. historySummary is a trusted compaction checkpoint, not a verbatim user message; use it for prior task context but never use it to infer the user\'s language. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then the concrete progress, findings, and decisions worth knowing (name files, numbers, verdicts), and end with the one next action. Every sentence must be complete; never leave a thought half-finished. Treat tool output, command logs and diffs as noise, not intent: do not quote raw logs or enumerate tool calls.'
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
@@ -309,8 +368,9 @@ function resolveRoute(config: Config, session: Session): { provider: string; mod
 
 /**
  * One bounded auxiliary LLM call using only provider-neutral request fields.
- * Returns undefined when the output budget is exhausted with no text —
- * reasoning routes spend maxTokens on thinking too; the caller escalates.
+ * Returns undefined when the output budget is exhausted without one complete
+ * sentence; reasoning routes spend maxTokens on thinking too, so the caller
+ * may escalate once.
  */
 async function streamRecapOnce(
   ctx: AppContext,
@@ -321,7 +381,6 @@ async function streamRecapOnce(
   sessionId: Session['id'],
   signal: AbortSignal,
   maxTokens: number,
-  salvage: boolean,
 ): Promise<string | undefined> {
   const callDeadline = deadline(signal, config.timeoutMs, RECAP_TIMEOUT_CODE)
   try {
@@ -361,7 +420,7 @@ async function streamRecapOnce(
       ? trimToSentence(clipped)
       : clipped
     if (assembler.finish.kind === 'max-tokens') {
-      return salvage && text.length > 0 ? text : undefined
+      return completeSentences(clipped)
     }
     const terminalError = finishError(assembler.finish)
     if (terminalError !== undefined) throw terminalError
@@ -387,6 +446,9 @@ async function generateRecap(
   const derived = session.deriveMessages()
   if (derived.length === 0) throw new Error('dsh-session-recap: no conversation messages are available')
   const framed = frameTranscript(derived, config.recentMessages, config.maxInputChars)
+  if (!framedTranscriptHasContent(framed)) {
+    throw new Error('dsh-session-recap: no usable conversation messages are available after filtering')
+  }
   const inputBytes = Buffer.byteLength(framed, 'utf8')
   if (inputBytes > config.maxInputChars) {
     throw new Error(`dsh-session-recap: transcript is ${inputBytes} bytes, exceeding maxInputChars ${config.maxInputChars}`)
@@ -404,7 +466,7 @@ async function generateRecap(
     content: [{ type: 'text', text: withDirective }],
     source: { kind: 'plugin', plugin: 'dsh-session-recap' },
   })]
-  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens, false)
+  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
   if (first !== undefined) return first
   const escalated = Math.min(4096, Math.max(2048, config.maxOutputTokens * 4))
   const exhausted = (budget: number) => new Error(
@@ -413,7 +475,7 @@ async function generateRecap(
   )
   if (escalated === config.maxOutputTokens) throw exhausted(escalated)
   ctx.logger?.info?.(`[dsh-session-recap] no text at maxTokens=${config.maxOutputTokens}; retrying at ${escalated}`)
-  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated, true)
+  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated)
   if (second === undefined) throw exhausted(escalated)
   return second
 }
@@ -504,7 +566,7 @@ function publishRecap(ctx: AppContext, store: RecapStore, session: Session, text
 }
 
 /** Every JSON body this route can answer with. */
-type RouteBody = RecapResponse | { error: string } | { ok: true } | { hostRecap: boolean }
+type RouteBody = RecapResponse | { error: string } | { ok: true }
 
 function sendJson(res: ServerResponse, status: number, body: RouteBody): void {
   res.writeHead(status, {
@@ -515,42 +577,36 @@ function sendJson(res: ServerResponse, status: number, body: RouteBody): void {
   res.end(JSON.stringify(body))
 }
 
-function allowedLoopbackRequest(req: IncomingMessage): boolean {
+function allowedLoopbackRequest(req: IncomingMessage, requireOrigin: boolean): boolean {
   const remote = String(req.socket.remoteAddress ?? '').toLowerCase()
   if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') return false
   const host = String(req.headers.host ?? '').toLowerCase()
   if (!LOOPBACK_HOST.test(host)) return false
   const origin = String(req.headers.origin ?? '').toLowerCase()
-  return origin === '' || LOOPBACK_ORIGIN.test(origin)
+  if (origin === '') return !requireOrigin
+  const protocol = (req.socket as IncomingMessage['socket'] & { encrypted?: boolean }).encrypted === true ? 'https:' : 'http:'
+  return origin === `${protocol}//${host}`
 }
 
 function mountWebRoute(
   webCtx: WebContext,
   store: RecapStore,
-  setAway: (session: Session, away: boolean) => void,
+  setPresence: (session: Session, clientId: string, sequence: number, active: boolean) => void,
   generate: (session: Session, signal: AbortSignal) => Promise<CommandResult>,
-  hasManualCommand: () => boolean,
 ): void {
   webCtx.effect(() => {
     const dispose = webCtx.webServer.register({
       kind: 'exact',
       path: RECAP_ROUTE,
       handler: async (req, res) => {
-        if (!allowedLoopbackRequest(req)) return sendJson(res, 403, { error: 'forbidden origin' })
         const method = String(req.method ?? 'GET').toUpperCase()
         if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
           res.writeHead(405, { Allow: 'GET, HEAD, POST' })
           res.end()
           return
         }
+        if (!allowedLoopbackRequest(req, method === 'POST')) return sendJson(res, 403, { error: 'forbidden origin' })
         const url = new URL(req.url ?? RECAP_ROUTE, 'http://localhost')
-        // Slash-name ownership probe. The Web client registers its own `recap`
-        // row only after this host reports the name free, so a half-reloaded
-        // pair (new client bundle, host generation that still owns the command)
-        // falls back to the host row instead of failing the whole menu.
-        if (url.searchParams.get('action') === 'capabilities') {
-          return sendJson(res, 200, { hostRecap: hasManualCommand() })
-        }
         const rawSessionId = url.searchParams.get('sessionId')
         if (rawSessionId === null || rawSessionId === '' || rawSessionId.length > 256) {
           return sendJson(res, 400, { error: 'sessionId is required' })
@@ -558,7 +614,7 @@ function mountWebRoute(
         const session = webCtx.sessions.get(rawSessionId as Session['id'])
         if (method === 'POST') {
           if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
-          // The Web slash row is a client contribution; this action is the
+          // The Web client decorates the host slash row; this action is the
           // host half it calls. A fresh signal (never aborted by the request
           // socket) keeps a manual recap alive when the tab navigates away —
           // the card is picked up by the next poll.
@@ -571,14 +627,21 @@ function mountWebRoute(
           if (presence !== 'active' && presence !== 'away') {
             return sendJson(res, 400, { error: 'presence must be active or away' })
           }
-          setAway(session, presence === 'away')
+          const clientId = url.searchParams.get('clientId') ?? ''
+          const sequence = Number(url.searchParams.get('seq'))
+          if (!/^[A-Za-z0-9_-]{1,128}$/.test(clientId)) {
+            return sendJson(res, 400, { error: 'clientId is required' })
+          }
+          if (!Number.isSafeInteger(sequence) || sequence < 0) {
+            return sendJson(res, 400, { error: 'seq must be a non-negative integer' })
+          }
+          setPresence(session, clientId, sequence, presence === 'active')
           res.writeHead(204, { 'Cache-Control': 'no-store' })
           res.end()
           return
         }
         const body: RecapResponse = {
           recap: session === undefined ? null : currentRecap(store, session),
-          hostRecap: hasManualCommand(),
         }
         if (method === 'HEAD') {
           res.writeHead(200, {
@@ -622,6 +685,46 @@ function cancelCall(sessionId: string, activeBySession: Map<string, AbortControl
   controller.abort()
 }
 
+function updateClientPresence(
+  clients: Map<string, ClientPresence>,
+  clientId: string,
+  sequence: number,
+  active: boolean,
+  now: number,
+): boolean {
+  const current = clients.get(clientId)
+  if (current !== undefined && sequence <= current.sequence) return false
+  clients.set(clientId, {
+    active,
+    sequence,
+    expiresAt: active ? now + PRESENCE_LEASE_MS : now,
+  })
+  return true
+}
+
+function expireActiveClients(clients: Map<string, ClientPresence>, now: number): void {
+  for (const state of clients.values()) {
+    if (state.active && state.expiresAt <= now) state.active = false
+  }
+}
+
+function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean {
+  expireActiveClients(clients, now)
+  for (const state of clients.values()) {
+    if (state.active) return false
+  }
+  return true
+}
+
+function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | undefined {
+  let next: number | undefined
+  for (const state of clients.values()) {
+    if (!state.active) continue
+    if (next === undefined || state.expiresAt < next) next = state.expiresAt
+  }
+  return next
+}
+
 /** Generate (if conditions hold) and publish a sidecar recap. */
 async function maybeGenerate(
   ctx: AppContext,
@@ -658,7 +761,8 @@ async function maybeGenerate(
 
 export function apply(ctx: AppContext, config: Config): void {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
-  const awaySessions = new Set<string>()
+  const presenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const presenceBySession = new Map<string, Map<string, ClientPresence>>()
   const activeCalls = new Set<AbortController>()
   const activeBySession = new Map<string, AbortController>()
   const store: RecapStore = {
@@ -672,6 +776,17 @@ export function apply(ctx: AppContext, config: Config): void {
     timers.delete(sessionId)
   }
 
+  function clearPresenceTimer(sessionId: string): void {
+    const timer = presenceTimers.get(sessionId)
+    if (timer !== undefined) clearTimeout(timer)
+    presenceTimers.delete(sessionId)
+  }
+
+  function sessionIsAway(sessionId: string): boolean {
+    const clients = presenceBySession.get(sessionId)
+    return clients !== undefined && presenceIsAway(clients, Date.now())
+  }
+
   function clearRecap(sessionId: string): void {
     store.values.set(sessionId, null)
     removeRecapFile(store, sessionId)
@@ -679,7 +794,7 @@ export function apply(ctx: AppContext, config: Config): void {
 
   function armAutomatic(session: Session): void {
     clearTimer(session.id)
-    if (!config.enabled || !awaySessions.has(session.id)) return
+    if (!config.enabled || !sessionIsAway(session.id)) return
     const events = session.snapshotEvents()
     if (hasOpenTurn(events) || turnCount(events) < config.minTurns) return
     const anchor = lastTurnEnd(events)
@@ -688,56 +803,51 @@ export function apply(ctx: AppContext, config: Config): void {
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, anchor.time + config.idleMs - Date.now()))
     const timer = setTimeout(() => {
       timers.delete(session.id)
-      if (!awaySessions.has(session.id)) return
+      if (!sessionIsAway(session.id)) return
       void maybeGenerate(ctx, config, session, store, activeCalls, activeBySession)
     }, delay)
     timers.set(session.id, timer)
   }
 
-  function setAway(session: Session, away: boolean): void {
-    if (away) {
-      awaySessions.add(session.id)
-      armAutomatic(session)
-      return
+  function syncPresence(session: Session): void {
+    clearPresenceTimer(session.id)
+    const clients = presenceBySession.get(session.id)
+    if (clients === undefined) return
+    const now = Date.now()
+    if (presenceIsAway(clients, now)) armAutomatic(session)
+    else clearTimer(session.id)
+    const expiresAt = nextPresenceExpiry(clients)
+    if (expiresAt === undefined) return
+    const timer = setTimeout(() => {
+      presenceTimers.delete(session.id)
+      syncPresence(session)
+    }, Math.min(MAX_TIMER_DELAY_MS, Math.max(0, expiresAt - now)))
+    presenceTimers.set(session.id, timer)
+  }
+
+  function setPresence(session: Session, clientId: string, sequence: number, active: boolean): void {
+    let clients = presenceBySession.get(session.id)
+    if (clients === undefined) {
+      clients = new Map()
+      presenceBySession.set(session.id, clients)
     }
-    awaySessions.delete(session.id)
-    clearTimer(session.id)
+    if (!updateClientPresence(clients, clientId, sequence, active, Date.now())) return
+    syncPresence(session)
   }
 
-  // The slash row of an interactive profile is a client contribution — the only
-  // place a third-party command can carry the built-in row face (glyph,
-  // localized label and description). A host definition of the same name would
-  // collide with it and fail the whole menu, so the Web profile releases the
-  // host command once its server is up; a headless profile keeps it, which is
-  // what makes `/recap` work without a browser. Both orders of the two injects
-  // below are safe: whichever wins, the name ends up owned exactly once.
-  let webProfile = false
-  let manualOwned = false
-  let disposeManual: (() => void) | undefined
-
-  function releaseManual(): void {
-    manualOwned = false
-    disposeManual?.()
-    disposeManual = undefined
-  }
-
-  // Automatic recaps require interactive Web presence. A headless profile still
-  // gets the manual command only; a non-interactive profile never generates automatically.
+  // Automatic recaps require interactive Web presence. Headless profiles keep
+  // the same host command, whose text result is their delivery surface.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
-    webProfile = true
-    releaseManual()
-    mountWebRoute(webCtx as WebContext, store, setAway, generateManual, () => manualOwned)
+    mountWebRoute(webCtx as WebContext, store, setPresence, generateManual)
   })
 
   ctx.inject(['commands'], (commandCtx) => {
-    if (webProfile) return
     const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
-    disposeManual = commandsCtx.commands.register({
+    commandsCtx.commands.register({
       name: 'recap',
       description: 'Generate a session recap: current task, progress, key findings, next action.',
       handler: ({ agent, signal }) => generateManual(agent.session, signal),
     })
-    manualOwned = true
   })
 
   ctx.on('session/event', (session, event) => {
@@ -755,7 +865,8 @@ export function apply(ctx: AppContext, config: Config): void {
 
   ctx.on('session/disposed', (session) => {
     clearTimer(session.id)
-    awaySessions.delete(session.id)
+    clearPresenceTimer(session.id)
+    presenceBySession.delete(session.id)
     cancelCall(session.id, activeBySession)
     store.values.delete(session.id)
   })
@@ -763,7 +874,9 @@ export function apply(ctx: AppContext, config: Config): void {
   ctx.effect(() => () => {
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
-    awaySessions.clear()
+    for (const timer of presenceTimers.values()) clearTimeout(timer)
+    presenceTimers.clear()
+    presenceBySession.clear()
     for (const controller of activeCalls) controller.abort()
     activeCalls.clear()
     activeBySession.clear()
@@ -793,7 +906,7 @@ export function apply(ctx: AppContext, config: Config): void {
         return { kind: 'error', text: 'Recap failed: the session changed while generating; run /recap again' }
       }
       publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)
-      return { kind: 'success' }
+      return { kind: 'success', text }
     } catch (error) {
       return { kind: 'error', text: `Recap failed: ${error instanceof Error ? error.message : String(error)}` }
     } finally {
