@@ -17,4 +17,11 @@ export interface RecapProjection {
 /** Response returned by the same-origin recap route. */
 export interface RecapResponse {
   recap: RecapProjection | null
+  /**
+   * Whether the host still owns the `recap` slash name. The Web client registers
+   * its own slash row only when the host has released the name: the two must
+   * never coexist, because a host/contribution name collision fails the whole
+   * command menu rather than shadowing one row.
+   */
+  hostRecap: boolean
 }

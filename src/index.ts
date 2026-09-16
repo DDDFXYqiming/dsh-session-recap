@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type LlmService from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import { BlockAssembler, createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { CommandInvocation, CommandRuntime } from '@deepseek-ai/dsh-commands'
+import type { CommandResult, CommandRuntime } from '@deepseek-ai/dsh-commands'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type WebServer from '@deepseek-ai/dsh-host-webserver'
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -503,7 +503,10 @@ function publishRecap(ctx: AppContext, store: RecapStore, session: Session, text
   }
 }
 
-function sendJson(res: ServerResponse, status: number, body: RecapResponse | { error: string }): void {
+/** Every JSON body this route can answer with. */
+type RouteBody = RecapResponse | { error: string } | { ok: true } | { hostRecap: boolean }
+
+function sendJson(res: ServerResponse, status: number, body: RouteBody): void {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -525,6 +528,8 @@ function mountWebRoute(
   webCtx: WebContext,
   store: RecapStore,
   setAway: (session: Session, away: boolean) => void,
+  generate: (session: Session, signal: AbortSignal) => Promise<CommandResult>,
+  hasManualCommand: () => boolean,
 ): void {
   webCtx.effect(() => {
     const dispose = webCtx.webServer.register({
@@ -539,6 +544,13 @@ function mountWebRoute(
           return
         }
         const url = new URL(req.url ?? RECAP_ROUTE, 'http://localhost')
+        // Slash-name ownership probe. The Web client registers its own `recap`
+        // row only after this host reports the name free, so a half-reloaded
+        // pair (new client bundle, host generation that still owns the command)
+        // falls back to the host row instead of failing the whole menu.
+        if (url.searchParams.get('action') === 'capabilities') {
+          return sendJson(res, 200, { hostRecap: hasManualCommand() })
+        }
         const rawSessionId = url.searchParams.get('sessionId')
         if (rawSessionId === null || rawSessionId === '' || rawSessionId.length > 256) {
           return sendJson(res, 400, { error: 'sessionId is required' })
@@ -546,6 +558,15 @@ function mountWebRoute(
         const session = webCtx.sessions.get(rawSessionId as Session['id'])
         if (method === 'POST') {
           if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
+          // The Web slash row is a client contribution; this action is the
+          // host half it calls. A fresh signal (never aborted by the request
+          // socket) keeps a manual recap alive when the tab navigates away —
+          // the card is picked up by the next poll.
+          if (url.searchParams.get('action') === 'generate') {
+            const result = await generate(session, new AbortController().signal)
+            if (result.kind === 'success') return sendJson(res, 200, { ok: true })
+            return sendJson(res, 409, { error: result.text })
+          }
           const presence = url.searchParams.get('presence')
           if (presence !== 'active' && presence !== 'away') {
             return sendJson(res, 400, { error: 'presence must be active or away' })
@@ -555,7 +576,10 @@ function mountWebRoute(
           res.end()
           return
         }
-        const body: RecapResponse = { recap: session === undefined ? null : currentRecap(store, session) }
+        const body: RecapResponse = {
+          recap: session === undefined ? null : currentRecap(store, session),
+          hostRecap: hasManualCommand(),
+        }
         if (method === 'HEAD') {
           res.writeHead(200, {
             'Content-Type': 'application/json; charset=utf-8',
@@ -680,10 +704,40 @@ export function apply(ctx: AppContext, config: Config): void {
     clearTimer(session.id)
   }
 
+  // The slash row of an interactive profile is a client contribution — the only
+  // place a third-party command can carry the built-in row face (glyph,
+  // localized label and description). A host definition of the same name would
+  // collide with it and fail the whole menu, so the Web profile releases the
+  // host command once its server is up; a headless profile keeps it, which is
+  // what makes `/recap` work without a browser. Both orders of the two injects
+  // below are safe: whichever wins, the name ends up owned exactly once.
+  let webProfile = false
+  let manualOwned = false
+  let disposeManual: (() => void) | undefined
+
+  function releaseManual(): void {
+    manualOwned = false
+    disposeManual?.()
+    disposeManual = undefined
+  }
+
   // Automatic recaps require interactive Web presence. A headless profile still
   // gets the manual command only; a non-interactive profile never generates automatically.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
-    mountWebRoute(webCtx as WebContext, store, setAway)
+    webProfile = true
+    releaseManual()
+    mountWebRoute(webCtx as WebContext, store, setAway, generateManual, () => manualOwned)
+  })
+
+  ctx.inject(['commands'], (commandCtx) => {
+    if (webProfile) return
+    const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
+    disposeManual = commandsCtx.commands.register({
+      name: 'recap',
+      description: 'Generate a session recap: current task, progress, key findings, next action.',
+      handler: ({ agent, signal }) => generateManual(agent.session, signal),
+    })
+    manualOwned = true
   })
 
   ctx.on('session/event', (session, event) => {
@@ -717,43 +771,36 @@ export function apply(ctx: AppContext, config: Config): void {
   })
 
   // Manual `/recap` publishes through the same sidecar-backed card as automatic
-  // recaps. The command result itself stays textless, avoiding a duplicate row.
-  ctx.inject(['commands'], (commandCtx) => {
-    const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
-    commandsCtx.commands.register({
-      name: 'recap',
-      description: 'Generate a session recap: current task, progress, key findings, next action.',
-      handler: async ({ agent, signal }: CommandInvocation) => {
-        const session = agent.session
-        if (hasOpenTurn(session.snapshotEvents())) {
-          return { kind: 'error' as const, text: 'Recap failed: wait until the current turn finishes, then run /recap again' }
-        }
-        const invoked = lastTurnEnd(session.snapshotEvents())
-        const controller = beginCall(session.id, activeCalls, activeBySession)
-        if (controller === undefined) {
-          return { kind: 'error' as const, text: 'Recap failed: another recap is already generating' }
-        }
-        const onOuterAbort = () => controller.abort(signal.reason)
-        if (signal.aborted) controller.abort(signal.reason)
-        else signal.addEventListener('abort', onOuterAbort, { once: true })
-        try {
-          const text = await generateRecap(ctx, config, session, controller.signal)
-          const nowEvents = session.snapshotEvents()
-          const nowEnd = lastTurnEnd(nowEvents)
-          if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
-            return { kind: 'error' as const, text: 'Recap failed: the session changed while generating; run /recap again' }
-          }
-          publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)
-          return { kind: 'success' as const }
-        } catch (error) {
-          return { kind: 'error' as const, text: `Recap failed: ${error instanceof Error ? error.message : String(error)}` }
-        } finally {
-          signal.removeEventListener('abort', onOuterAbort)
-          endCall(session.id, controller, activeCalls, activeBySession)
-        }
-      },
-    })
-  })
+  // recaps. It runs from the host command (non-interactive profiles) or from the
+  // Web client action; both share one body and one per-session call slot.
+  async function generateManual(session: Session, signal: AbortSignal): Promise<CommandResult> {
+    if (hasOpenTurn(session.snapshotEvents())) {
+      return { kind: 'error', text: 'Recap failed: wait until the current turn finishes, then run /recap again' }
+    }
+    const invoked = lastTurnEnd(session.snapshotEvents())
+    const controller = beginCall(session.id, activeCalls, activeBySession)
+    if (controller === undefined) {
+      return { kind: 'error', text: 'Recap failed: another recap is already generating' }
+    }
+    const onOuterAbort = () => controller.abort(signal.reason)
+    if (signal.aborted) controller.abort(signal.reason)
+    else signal.addEventListener('abort', onOuterAbort, { once: true })
+    try {
+      const text = await generateRecap(ctx, config, session, controller.signal)
+      const nowEvents = session.snapshotEvents()
+      const nowEnd = lastTurnEnd(nowEvents)
+      if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
+        return { kind: 'error', text: 'Recap failed: the session changed while generating; run /recap again' }
+      }
+      publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)
+      return { kind: 'success' }
+    } catch (error) {
+      return { kind: 'error', text: `Recap failed: ${error instanceof Error ? error.message : String(error)}` }
+    } finally {
+      signal.removeEventListener('abort', onOuterAbort)
+      endCall(session.id, controller, activeCalls, activeBySession)
+    }
+  }
 
   ctx.logger?.info?.('[dsh-session-recap] mounted (awayMs=%s minTurns=%s maxChars=%s automatic=%s)', config.idleMs, config.minTurns, config.maxChars, config.enabled)
 }

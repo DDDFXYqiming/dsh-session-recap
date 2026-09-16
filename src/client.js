@@ -10,6 +10,10 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     var react = require('react')
+    // Built-in menu glyph from the shell's platform module table; a module
+    // table without it costs the glyph, never the banner.
+    var RecapIcon
+    try { RecapIcon = require('@deepseek-ai/dsh-client-ui-primitives').IconListPenOutline16 } catch (_) { RecapIcon = undefined }
     var NS = '@dsh-external/dsh-session-recap'
     var POLL_MS = 2000
     var POLL_TIMEOUT_MS = 4000
@@ -91,6 +95,55 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // Manual `/recap` runs through the host route: in an interactive profile the
+    // slash row is a client contribution, so there is no command result to render.
+    // Its outcome — a refusal or a provider failure — is shown in this same card.
+    var notices = new Map()
+    var noticeWatchers = new Set()
+    function publishNotice(sessionId, message) {
+      var key = String(sessionId)
+      if (typeof message === 'string' && message !== '') notices.set(key, message)
+      else notices.delete(key)
+      noticeWatchers.forEach(function (watcher) { watcher() })
+    }
+    // Live banner polls, so a manual recap lands without waiting for the next tick.
+    var pollers = new Map()
+    // Whether the host has released the `recap` slash name to this bundle. The
+    // contribution stays unavailable until it has: two owners of one name make
+    // ui-commands fail the whole command menu, so the safe side of the race is
+    // "keep the host's own row".
+    var hostReleased = false
+
+    function adoptHostRecap(body) {
+      hostReleased = body !== null && body.hostRecap === false
+    }
+
+    function probeHostRecap() {
+      fetch('/api/dsh-session-recap?action=capabilities', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (response) { return response.ok ? response.json().catch(function () { return null }) : null })
+        .then(adoptHostRecap)
+        .catch(function () {})
+    }
+
+    function requestManualRecap(session, t) {
+      var sessionId = session === undefined || session === null ? undefined : session.sessionId
+      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
+      var key = String(sessionId)
+      var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(key) + '&action=generate'
+      fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+        .then(function (response) { return response.json().catch(function () { return null }) })
+        .then(function (body) {
+          if (body !== null && body.ok === true) {
+            publishNotice(key, null)
+            var poll = pollers.get(key)
+            if (poll !== undefined) poll()
+            return
+          }
+          publishNotice(key, body !== null && typeof body.error === 'string' && body.error !== '' ? body.error : t('failed'))
+        })
+        .catch(function () { publishNotice(key, t('failed')) })
+    }
+
     function isWindowActive() {
       if (typeof document === 'undefined') return true
       return !document.hidden && (typeof document.hasFocus !== 'function' || document.hasFocus())
@@ -155,6 +208,14 @@ window.__ModuleLoader__.load({
           })
       var activityKey = sessionActivity + ':' + chatActivity
       var lastActivity = react.useRef(activityKey)
+      var noticeState = react.useState(0)
+      var setNoticeTick = noticeState[1]
+      react.useEffect(function () {
+        var watcher = function () { setNoticeTick(function (value) { return value + 1 }) }
+        noticeWatchers.add(watcher)
+        return function () { noticeWatchers.delete(watcher) }
+      }, [])
+      var notice = notices.get(sessionKey) || null
 
       // The host route is deliberately polled: the HTTP carrier has no
       // projection push channel for plugin-owned sidecar state.
@@ -180,17 +241,20 @@ window.__ModuleLoader__.load({
             })
             .then(function (body) {
               if (cancelled || body === null) return
+              adoptHostRecap(body)
               setLoadedRecap({ owner: sessionKey, value: validRecap(body.recap) })
             })
             .catch(function () {})
             .finally(function () { clearTimeout(pollAbort); inFlight = false })
         }
         load()
+        pollers.set(sessionKey, load)
         var timer = setInterval(load, POLL_MS)
         document.addEventListener('visibilitychange', load)
         window.addEventListener('focus', load)
         return function () {
           cancelled = true
+          if (pollers.get(sessionKey) === load) pollers.delete(sessionKey)
           clearInterval(timer)
           document.removeEventListener('visibilitychange', load)
           window.removeEventListener('focus', load)
@@ -247,10 +311,13 @@ window.__ModuleLoader__.load({
         }
       }, [sessionKey])
 
-      var show = text !== null && currentKey !== null && dismissedKey !== currentKey && !wasDismissed(sessionId, turnSeq, at)
+      // A failure notice is in-memory state, not a stored recap: dismissing it
+      // never writes the dismissal identity, so the next failure still shows.
+      var showRecap = text !== null && currentKey !== null && dismissedKey !== currentKey && !wasDismissed(sessionId, turnSeq, at)
+      var show = notice !== null || showRecap
       react.useEffect(function () {
-        if (show) shownKey.current = currentKey
-      }, [show, currentKey])
+        if (showRecap) shownKey.current = currentKey
+      }, [showRecap, currentKey])
 
       // Hooks above are intentionally unconditional; the slot can briefly
       // exist without a bound session while the conversation tree mounts.
@@ -258,35 +325,68 @@ window.__ModuleLoader__.load({
       var t = props.t || function (key) { return key }
       return react.createElement('div', { className: 'sr-recap-banner', role: 'note' },
         react.createElement('div', { className: 'sr-recap-head' },
-          react.createElement('span', { className: 'sr-recap-badge' }, t('badge')),
+          react.createElement('span', { className: 'sr-recap-badge' }, notice !== null ? t('failed') : t('badge')),
           react.createElement('button', {
             type: 'button',
             className: 'sr-recap-close',
             'aria-label': t('dismiss'),
             title: t('close'),
             onClick: function () {
-              rememberDismissed(sessionId, turnSeq, at)
-              setDismissedKey(currentKey)
+              if (notice !== null) publishNotice(sessionKey, null)
+              if (showRecap) {
+                rememberDismissed(sessionId, turnSeq, at)
+                setDismissedKey(currentKey)
+              }
             },
           }, '\u2715')),
-        react.createElement('div', { className: 'sr-recap-text' }, text))
+        react.createElement('div', { className: 'sr-recap-text' }, notice !== null ? notice : text))
     }
 
     var en = {
       badge: 'Recap',
+      failed: 'Recap failed',
       dismiss: 'Dismiss session recap',
       close: 'Dismiss',
+      'command.label': 'Recap',
+      'command.description': 'Generate a session recap: current task, progress, and next action',
     }
     var zh = {
       badge: '回顾',
+      failed: '回顾失败',
       dismiss: '关闭会话回顾',
       close: '关闭',
+      'command.label': '回顾',
+      'command.description': '生成会话回顾：当前任务、已完成进展和下一步',
     }
     var inject = ['locale', 'slots']
 
     function apply(ctx) {
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-session-recap: dictionaries')
       var t = ctx.locale.bind(NS)
+      // The slash row is client-owned: only a client contribution can carry the
+      // built-in row face (glyph, localized label and description). The host half
+      // releases its `/recap` command in interactive profiles, and this bundle
+      // claims the name only once a host reports it free (`available` below), so
+      // a half-reloaded pair keeps the host row instead of breaking the menu. A
+      // deferred inject keeps the banner alive on a host without that surface.
+      probeHostRecap()
+      ctx.inject(['commandUi'], function (scope) {
+        var command = scope.get('commandUi')
+        if (command === undefined) return
+        scope.effect(function () {
+          return command.register({
+            name: 'recap',
+            label: function () { return t('command.label') },
+            description: function () { return t('command.description') },
+            icon: RecapIcon,
+            available: function () { return hostReleased },
+            ui: {
+              kind: 'action',
+              run: function (session) { requestManualRecap(session, t) },
+            },
+          })
+        }, 'dsh-session-recap: /recap contribution')
+      })
       ctx.slots.inject('conversation.input.dock', function () {
         return ctx.slots.register({ name: 'conversation.input.dock', id: 'recap', locale: NS }, function (props) {
           return react.createElement(RecapBanner, Object.assign({}, props, { t: t }))
