@@ -4,7 +4,21 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-test('manual recap uses rc.1 snapshots, publishes a sidecar and rejects open turns', async () => {
+const projectionRuntime = () => {
+  let definition
+  return {
+    register(value) { definition = value; return () => {} },
+    stateOf(session, key) {
+      assert.equal(key, 'sessionRecap')
+      assert.ok(definition, 'projection is registered before it is read')
+      let state = definition.init({}, 0)
+      for (const event of session.snapshotEvents()) state = definition.apply(state, event)
+      return state
+    },
+  }
+}
+
+test('manual recap uses the registered projection, publishes a sidecar and rejects open turns', async () => {
   const root = mkdtempSync(join(tmpdir(), 'recap-api-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = root
@@ -19,6 +33,7 @@ test('manual recap uses rc.1 snapshots, publishes a sidecar and rejects open tur
     effect(setup) { dispose.push(setup()) },
     inject(names, setup) { if (names.includes('commands')) setup(ctx) },
     commands: { register(value) { command = value } },
+    sessionProjections: projectionRuntime(),
     llm: { async *stream(options) {
       calls++
       assert.equal(options.provider, 'test-provider')
@@ -33,10 +48,10 @@ test('manual recap uses rc.1 snapshots, publishes a sidecar and rejects open tur
   }
   // Deliberately no session.events property: removed by the current host SDK.
   try {
-    apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
+    apply(ctx, Config({ provider: 'test-provider', model: 'test-model', hostCommand: true }))
     const invoke = () => command.handler({ agent: { session }, signal: new AbortController().signal })
     assert.deepEqual(await invoke(), { kind: 'success', text: '兼容测试通过。' })
-    assert.ok(snapshots >= 3)
+    assert.ok(snapshots >= 2)
     assert.equal(calls, 1)
     const stored = JSON.parse(readFileSync(join(root, 'plugin-data/dsh-session-recap/snapshot-only.json'), 'utf8'))
     assert.equal(stored.text, '兼容测试通过。')
@@ -64,6 +79,7 @@ test('max-token output with a complete sentence is delivered without retry', asy
     effect(setup) { dispose.push(setup()) },
     inject(names, setup) { if (names.includes('commands')) setup(ctx) },
     commands: { register(value) { command = value } },
+    sessionProjections: projectionRuntime(),
     llm: { async *stream() {
       calls++
       yield { type: 'text-delta', index: 0, text: '已有完整正文。下一步继续验证。' }
@@ -76,7 +92,7 @@ test('max-token output with a complete sentence is delivered without retry', asy
     deriveMessages() { return [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '生成回顾' }] }] },
   }
   try {
-    apply(ctx, Config({ provider: 'test-provider', model: 'test-model', maxOutputTokens: 4096 }))
+    apply(ctx, Config({ provider: 'test-provider', model: 'test-model', maxOutputTokens: 4096, hostCommand: true }))
     const result = await command.handler({ agent: { session }, signal: new AbortController().signal })
     assert.deepEqual(result, { kind: 'success', text: '已有完整正文。下一步继续验证。' })
     assert.equal(calls, 1)
@@ -101,6 +117,7 @@ test('filtered-empty transcript fails before calling the model', async () => {
     effect(setup) { dispose.push(setup()) },
     inject(names, setup) { if (names.includes('commands')) setup(ctx) },
     commands: { register(value) { command = value } },
+    sessionProjections: projectionRuntime(),
     llm: { async *stream() { calls++; yield { type: 'finish', reason: { kind: 'stop' } } } },
   }
   const session = {
@@ -111,7 +128,7 @@ test('filtered-empty transcript fails before calling the model', async () => {
     },
   }
   try {
-    apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
+    apply(ctx, Config({ provider: 'test-provider', model: 'test-model', hostCommand: true }))
     const result = await command.handler({ agent: { session }, signal: new AbortController().signal })
     assert.equal(result.kind, 'error')
     assert.match(result.text, /no usable conversation messages/)
@@ -125,10 +142,10 @@ test('filtered-empty transcript fails before calling the model', async () => {
 })
 
 /**
- * The host always owns the slash name. The Web client decorates that command's
- * bare action, so every inject order keeps exactly one catalog owner.
+ * The Web profile leaves the optional host command disabled, so the client
+ * contribution remains the only slash-catalog owner in every inject order.
  */
-test('a web profile keeps the host slash command and generates manual recaps through the route', async () => {
+test('a web profile omits the host slash command and generates manual recaps through the route', async () => {
   const scenario = async (order) => {
     const root = mkdtempSync(join(tmpdir(), 'recap-web-'))
     const previous = process.env.DSH_HOME
@@ -149,6 +166,7 @@ test('a web profile keeps the host slash command and generates manual recaps thr
       effect(setup) { dispose.push(setup()) },
       inject(names, setup) { pending.set(names.includes('webServer') ? 'web' : 'commands', setup) },
       commands: { register(value) { command = value; return () => { command = undefined } } },
+      sessionProjections: projectionRuntime(),
       webServer: { register(spec) { route = spec.handler; return () => {} } },
       sessions: { get(id) { return id === session.id ? session : undefined } },
       llm: { async *stream() {
@@ -172,7 +190,7 @@ test('a web profile keeps the host slash command and generates manual recaps thr
       apply(ctx, Config({ provider: 'test-provider', model: 'test-model' }))
       assert.equal(pending.size, 2, 'both capability injects are requested')
       for (const kind of order) pending.get(kind)(ctx)
-      assert.equal(typeof command?.handler, 'function', order.join('>') + ': the host command remains registered')
+      assert.equal(command, undefined, order.join('>') + ': no host slash owner is registered')
       assert.equal(typeof route, 'function', order.join('>') + ': the web route is mounted')
       await route({ ...req, method: 'GET', url: '/api/dsh-session-recap?sessionId=' + session.id }, res)
       assert.deepEqual(responses.shift(), { status: 200, body: { recap: null } })

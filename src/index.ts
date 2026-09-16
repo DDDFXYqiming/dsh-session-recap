@@ -11,6 +11,7 @@
  * @module @dsh-external/dsh-session-recap
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { z as zod } from 'zod'
 import type LlmService from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import { BlockAssembler, createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -22,16 +23,19 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { MAX_TIMER_DELAY_MS, deadline } from '@deepseek-ai/dsh-timeout'
 import type { Session, SessionEvent, SessionStore } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import z from '@deepseek-ai/schemastery'
 import type { RecapProjection, RecapResponse } from './types.js'
 
 export const name = '@dsh-external/dsh-session-recap'
-/** `llm` is accessed directly by the host generation paths. */
-export const inject = ['llm']
+/** `llm` generates recaps; `sessionProjections` supplies current durable turn state. */
+export const inject = ['llm', 'sessionProjections']
 
 export interface Config {
   /** Automatic recap toggle; manual `/recap` remains available. */
   enabled: boolean
+  /** Register the host `/recap` command for profiles without the Web client. */
+  hostCommand: boolean
   /** Away window after a completed turn before auto-generating a recap (ms). */
   idleMs: number
   /** Minimum completed turns before any automatic recap is generated. */
@@ -59,6 +63,7 @@ export interface Config {
 
 export const Config = z.object({
   enabled: z.boolean().default(true),
+  hostCommand: z.boolean().default(false).description('Register the host /recap command. Enable for headless profiles; leave false when the Web client owns the styled row.'),
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
   minTurns: z.number().step(1).min(1).max(1000).default(3),
   recentMessages: z.number().step(1).min(1).max(200).default(80),
@@ -111,6 +116,45 @@ type RecapFrame = {
   recent: Array<{ role: 'user' | 'assistant'; text: string }>
 }
 
+type RecapSessionState = {
+  openTurn: boolean
+  completedTurns: number
+  lastTurnEnd: { seq: number; time: number; completed: boolean } | null
+}
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap {
+    sessionRecap: RecapSessionState
+  }
+}
+
+const recapSessionStateSchema = zod.object({
+  openTurn: zod.boolean(),
+  completedTurns: zod.number().int().nonnegative(),
+  lastTurnEnd: zod.object({
+    seq: zod.number().int().nonnegative(),
+    time: zod.number(),
+    completed: zod.boolean(),
+  }).nullable(),
+})
+
+const recapProjectionDefinition = {
+  key: 'sessionRecap' as const,
+  stateVersion: 1,
+  stateSchema: recapSessionStateSchema,
+  init: (): RecapSessionState => ({ openTurn: false, completedTurns: 0, lastTurnEnd: null }),
+  apply: (state: RecapSessionState, event: SessionEvent): RecapSessionState => {
+    if (event.type === 'turn/start') return state.openTurn ? state : { ...state, openTurn: true }
+    if (event.type !== 'turn/end') return state
+    const completed = event.data.reason.kind === 'completed'
+    return {
+      openTurn: false,
+      completedTurns: state.completedTurns + (completed ? 1 : 0),
+      lastTurnEnd: { seq: event.seq, time: event.time, completed },
+    }
+  },
+}
+
 /**
  * Recursively freeze a value, skipping `AbortSignal`. Plugin-local on purpose:
  * `deepFreeze` was exported by `dsh-llm` on older hosts and moved to
@@ -131,32 +175,10 @@ function deepFreeze<T>(value: T): T {
   return value
 }
 
-/** Whether the log holds an opened turn without its closing `turn/end`. */
-function hasOpenTurn(events: readonly SessionEvent[]): boolean {
-  let open = false
-  for (const event of events) {
-    if (event.type === 'turn/start') open = true
-    else if (event.type === 'turn/end') open = false
-  }
-  return open
-}
-
-/** Number of successfully completed turns in the log. */
-function turnCount(events: readonly SessionEvent[]): number {
-  let count = 0
-  for (const event of events) {
-    if (event.type === 'turn/end' && event.data.reason.kind === 'completed') count += 1
-  }
-  return count
-}
-
-/** The last `turn/end` event, or undefined for an empty/never-ending log. */
-function lastTurnEnd(events: readonly SessionEvent[]): SessionEvent<'turn/end'> | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.type === 'turn/end') return event
-  }
-  return undefined
+function recapSessionState(ctx: AppContext, session: Session): RecapSessionState {
+  const state = ctx.sessionProjections.stateOf(session, 'sessionRecap')
+  if (state === undefined) throw new Error('dsh-session-recap: session projection is unavailable')
+  return state
 }
 
 /** Extract readable context from provider-neutral message content. */
@@ -326,6 +348,7 @@ export const internals = {
   presenceIsAway,
   nextPresenceExpiry,
   allowedLoopbackRequest,
+  recapProjectionDefinition,
   systemPrompt,
   languageDirective,
 }
@@ -527,18 +550,18 @@ function readRecapFile(store: RecapStore, sessionId: string): RecapProjection | 
   }
 }
 
-function isCurrentRecap(events: readonly SessionEvent[], recap: RecapProjection): boolean {
-  if (hasOpenTurn(events)) return false
-  const anchor = lastTurnEnd(events)
-  return recap.turnSeq === (anchor?.seq ?? null)
+function isCurrentRecap(state: RecapSessionState, recap: RecapProjection): boolean {
+  if (state.openTurn) return false
+  return recap.turnSeq === (state.lastTurnEnd?.seq ?? null)
 }
 
 /** Read a sidecar snapshot and discard it once the session has advanced. */
-function currentRecap(store: RecapStore, session: Session): RecapProjection | null {
+function currentRecap(ctx: AppContext, store: RecapStore, session: Session): RecapProjection | null {
   const id = session.id
+  const state = recapSessionState(ctx, session)
   if (store.values.has(id)) {
     const cached = store.values.get(id) ?? null
-    if (cached !== null && !isCurrentRecap(session.snapshotEvents(), cached)) {
+    if (cached !== null && !isCurrentRecap(state, cached)) {
       store.values.set(id, null)
       removeRecapFile(store, id)
       return null
@@ -546,7 +569,7 @@ function currentRecap(store: RecapStore, session: Session): RecapProjection | nu
     return cached
   }
   const recap = readRecapFile(store, id)
-  if (recap === undefined || !isCurrentRecap(session.snapshotEvents(), recap)) {
+  if (recap === undefined || !isCurrentRecap(state, recap)) {
     store.values.set(id, null)
     if (recap !== undefined) removeRecapFile(store, id)
     return null
@@ -614,8 +637,8 @@ function mountWebRoute(
         const session = webCtx.sessions.get(rawSessionId as Session['id'])
         if (method === 'POST') {
           if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
-          // The Web client decorates the host slash row; this action is the
-          // host half it calls. A fresh signal (never aborted by the request
+          // The Web client owns the styled slash row; this route is the host
+          // action it calls. A fresh signal (never aborted by the request
           // socket) keeps a manual recap alive when the tab navigates away —
           // the card is picked up by the next poll.
           if (url.searchParams.get('action') === 'generate') {
@@ -641,7 +664,7 @@ function mountWebRoute(
           return
         }
         const body: RecapResponse = {
-          recap: session === undefined ? null : currentRecap(store, session),
+          recap: session === undefined ? null : currentRecap(webCtx, store, session),
         }
         if (method === 'HEAD') {
           res.writeHead(200, {
@@ -734,20 +757,19 @@ async function maybeGenerate(
   activeCalls: Set<AbortController>,
   activeBySession: Map<string, AbortController>,
 ): Promise<void> {
-  const events = session.snapshotEvents()
-  if (hasOpenTurn(events)) return
-  if (turnCount(events) < config.minTurns) return
-  const anchor = lastTurnEnd(events)
-  if (anchor === undefined || anchor.data.reason.kind !== 'completed') return
-  if (currentRecap(store, session)?.turnSeq === anchor.seq) return
+  const state = recapSessionState(ctx, session)
+  if (state.openTurn || state.completedTurns < config.minTurns) return
+  const anchor = state.lastTurnEnd
+  if (anchor === null || !anchor.completed) return
+  if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
   const controller = beginCall(session.id, activeCalls, activeBySession)
   if (controller === undefined) return
   try {
     const text = await generateRecap(ctx, config, session, controller.signal)
-    const nowEvents = session.snapshotEvents()
-    const nowEnd = lastTurnEnd(nowEvents)
-    if (hasOpenTurn(nowEvents) || nowEnd === undefined || nowEnd.seq !== anchor.seq || nowEnd.data.reason.kind !== 'completed') return
-    if (currentRecap(store, session)?.turnSeq === anchor.seq) return
+    const nowState = recapSessionState(ctx, session)
+    const nowEnd = nowState.lastTurnEnd
+    if (nowState.openTurn || nowEnd === null || nowEnd.seq !== anchor.seq || !nowEnd.completed) return
+    if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
     publishRecap(ctx, store, session, text, anchor.seq)
     ctx.logger?.info?.('dsh-session-recap: generated recap for %s (turn/end seq %s)', session.id, anchor.seq)
   } catch (error) {
@@ -760,6 +782,7 @@ async function maybeGenerate(
 }
 
 export function apply(ctx: AppContext, config: Config): void {
+  ctx.sessionProjections.register(recapProjectionDefinition)
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const presenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const presenceBySession = new Map<string, Map<string, ClientPresence>>()
@@ -795,11 +818,11 @@ export function apply(ctx: AppContext, config: Config): void {
   function armAutomatic(session: Session): void {
     clearTimer(session.id)
     if (!config.enabled || !sessionIsAway(session.id)) return
-    const events = session.snapshotEvents()
-    if (hasOpenTurn(events) || turnCount(events) < config.minTurns) return
-    const anchor = lastTurnEnd(events)
-    if (anchor === undefined || anchor.data.reason.kind !== 'completed') return
-    if (currentRecap(store, session)?.turnSeq === anchor.seq) return
+    const state = recapSessionState(ctx, session)
+    if (state.openTurn || state.completedTurns < config.minTurns) return
+    const anchor = state.lastTurnEnd
+    if (anchor === null || !anchor.completed) return
+    if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, anchor.time + config.idleMs - Date.now()))
     const timer = setTimeout(() => {
       timers.delete(session.id)
@@ -835,13 +858,14 @@ export function apply(ctx: AppContext, config: Config): void {
     syncPresence(session)
   }
 
-  // Automatic recaps require interactive Web presence. Headless profiles keep
-  // the same host command, whose text result is their delivery surface.
+  // Automatic recaps require interactive Web presence. Headless profiles can
+  // opt into a host command, whose text result is their delivery surface.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
     mountWebRoute(webCtx as WebContext, store, setPresence, generateManual)
   })
 
   ctx.inject(['commands'], (commandCtx) => {
+    if (!config.hostCommand) return
     const commandsCtx = commandCtx as AppContext & { commands: CommandRuntime }
     commandsCtx.commands.register({
       name: 'recap',
@@ -884,13 +908,14 @@ export function apply(ctx: AppContext, config: Config): void {
   })
 
   // Manual `/recap` publishes through the same sidecar-backed card as automatic
-  // recaps. It runs from the host command (non-interactive profiles) or from the
-  // Web client action; both share one body and one per-session call slot.
+  // recaps. It runs from the optional host command (non-interactive profiles)
+  // or from the Web client action; both share one body and one call slot.
   async function generateManual(session: Session, signal: AbortSignal): Promise<CommandResult> {
-    if (hasOpenTurn(session.snapshotEvents())) {
+    const invokedState = recapSessionState(ctx, session)
+    if (invokedState.openTurn) {
       return { kind: 'error', text: 'Recap failed: wait until the current turn finishes, then run /recap again' }
     }
-    const invoked = lastTurnEnd(session.snapshotEvents())
+    const invoked = invokedState.lastTurnEnd
     const controller = beginCall(session.id, activeCalls, activeBySession)
     if (controller === undefined) {
       return { kind: 'error', text: 'Recap failed: another recap is already generating' }
@@ -900,9 +925,9 @@ export function apply(ctx: AppContext, config: Config): void {
     else signal.addEventListener('abort', onOuterAbort, { once: true })
     try {
       const text = await generateRecap(ctx, config, session, controller.signal)
-      const nowEvents = session.snapshotEvents()
-      const nowEnd = lastTurnEnd(nowEvents)
-      if (hasOpenTurn(nowEvents) || nowEnd?.seq !== invoked?.seq) {
+      const nowState = recapSessionState(ctx, session)
+      const nowEnd = nowState.lastTurnEnd
+      if (nowState.openTurn || nowEnd?.seq !== invoked?.seq) {
         return { kind: 'error', text: 'Recap failed: the session changed while generating; run /recap again' }
       }
       publishRecap(ctx, store, session, text, nowEnd?.seq ?? null)

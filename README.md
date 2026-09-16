@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前版本为 **0.1.7**，适配 DSH `0.1.2-rc.1`，并以官方 GitHub `master@0d1f500` 做源码兼容核对。事件读取改用 `Session.snapshotEvents()`；构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前插件版本为 **0.1.7**，运行与开发基线为 DSH `0.1.6-alpha.1`。会话轮次状态通过官方 `sessionProjections` 服务维护，不再由插件直接读取已弃用的 `Session.snapshotEvents()`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -15,7 +15,7 @@
 - 仅在 Web 窗口失焦或切走当前会话时后台生成；窗口保持聚焦时，单纯空闲不会调用模型。
 - 默认要求最后一个完成 turn 已过去 3 分钟，且会话至少有 3 个完成 turn，同一 turn 不会连续生成两次。这两道门槛挡住了短暂分心带来的无意义回顾。
 - `/recap` 随时按需生成，并在同一张回顾卡片中显示；关闭自动回顾不影响手动命令。
-- `/recap` 始终由宿主命令持有；Web 客户端只用官方 `commandUi.decorate()` 接管裸命令的卡片动作，因此热更新期间也不会出现两个同名所有者。没有 Web 客户端时，命令结果会直接返回回顾正文。
+- Web profile 的 `/recap` 由客户端命令贡献持有，使用官方命令行样式、图标及中英文标题和说明。默认不注册同名宿主命令，因此不会发生目录冲突；无浏览器 profile 可显式开启 `hostCommand`，命令结果会直接返回回顾正文。
 - 手动回顾失败时，错误直接显示在同一张卡片里（本地化的失败角标加错误正文），不再产生命令结果行。
 - 回顾正文跟随会话里用户消息的语言，英文提示词不会强制英文输出。
 - 插件兼容旧模型服务。思考过程以 think / thinking / thought 标签块内联在正文里时（无独立 reasoning 通道），这些块在进入回顾输入和回顾卡片前都会被剥掉。
@@ -69,6 +69,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
 - id: dsh-session-recap
   config:
     enabled: true        # 只控制自动回顾；/recap 始终可用
+    hostCommand: false   # Web 保持 false；无浏览器 profile 可设为 true
     idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
     minTurns: 3          # 自动回顾所需的最少完成轮数
     recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
@@ -85,6 +86,8 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
 
 `provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算。预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
+`hostCommand` 决定 `/recap` 的唯一所有者。Web profile 保持默认值，由客户端贡献完整菜单样式；只有不加载 Web 客户端的 profile 才设为 `true`，由宿主命令在终端或其他命令面直接返回正文。同一 profile 不要同时启用两种所有者。
+
 ## 存储布局
 
 ```text
@@ -99,9 +102,9 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 | 项目 | 版本或范围 |
 | --- | --- |
 | dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | `0.1.2-rc.1` |
+| DeepSeek Harness packages | `0.1.6-alpha.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
-| 使用面 | 所有提供 LLM、session 和 commands 服务的 DSH profile。Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
+| 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
 
 ## 开发与验证
 
@@ -110,14 +113,14 @@ npm install
 npm run typecheck
 npm run build
 npm test
-npm run test:upstream # 需设置 DSH_UPSTREAM_ROOT，核对固定 GitHub master SHA
+npm run test:upstream # 需设置 DSH_UPSTREAM_ROOT；默认核对 dsh-v0.1.6-alpha.1
 npm run build:client
 npm pack
 ```
 
-构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。
+构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。上游结构测试默认使用发布标签 `dsh-v0.1.6-alpha.1`；需要检查更新的源码时可通过 `DSH_UPSTREAM_REF` 指定分支、标签或提交，不在文档中把会移动的 `master` 写成固定事实。
 
-插件不调用宿主的 `deepFreeze`（该导出在旧版宿主属于 `dsh-llm`、新版迁移到了 `dsh-util-values`，静态 import 任意一侧都会打死另一侧的宿主），请求冻结由插件内本地实现完成，因此同一份产物同时兼容新旧 DSH。
+插件不调用宿主的 `deepFreeze`。请求选项的冻结由插件内本地实现完成，避免依赖这个内部导出的迁移位置。
 
 ## 相关
 

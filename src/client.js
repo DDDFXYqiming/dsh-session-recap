@@ -10,6 +10,8 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     var react = require('react')
+    var RecapIcon
+    try { RecapIcon = require('@deepseek-ai/dsh-client-ui-primitives').IconListPenOutline16 } catch (_) { RecapIcon = undefined }
     var NS = '@dsh-external/dsh-session-recap'
     var POLL_MS = 2000
     var POLL_TIMEOUT_MS = 4000
@@ -94,8 +96,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // Manual `/recap` runs through the host route when the host command is
-    // decorated by this client. Its outcome is shown in this same card.
+    // Manual `/recap` runs through the host route from the client-owned row.
+    // Its outcome is shown in this same card.
     var notices = new Map()
     var noticeWatchers = new Set()
     function publishNotice(sessionId, message) {
@@ -340,26 +342,33 @@ window.__ModuleLoader__.load({
       failed: 'Recap failed',
       dismiss: 'Dismiss session recap',
       close: 'Dismiss',
+      commandLabel: 'Recap',
+      commandDescription: 'Summarize the current task, progress, key findings, and next action.',
     }
     var zh = {
       badge: '回顾',
       failed: '回顾失败',
       dismiss: '关闭会话回顾',
       close: '关闭',
+      commandLabel: '会话回顾',
+      commandDescription: '总结当前任务、进展、关键发现和下一步。',
     }
     var inject = ['locale', 'slots']
 
     function apply(ctx) {
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-session-recap: dictionaries')
       var t = ctx.locale.bind(NS)
-      // Keep one owner for /recap at all times. The host command owns the row;
-      // this official decoration changes only its bare/menu action.
+      // The Web profile leaves hostCommand disabled, so this contribution is
+      // the single /recap owner and can supply the full localized menu row.
       ctx.inject(['commandUi'], function (scope) {
         var command = scope.get('commandUi')
         if (command === undefined) return
         scope.effect(function () {
-          return command.decorate({
+          return command.register({
             name: 'recap',
+            label: function () { return t('commandLabel') },
+            description: function () { return t('commandDescription') },
+            icon: RecapIcon,
             available: function () { return true },
             ui: {
               kind: 'action',

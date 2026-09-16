@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 /**
- * The host slash row has one owner. The Web bundle decorates its bare action
- * and posts manual generation to the sidecar route.
+ * The Web bundle owns the styled slash row and posts manual generation to the
+ * sidecar route. Headless profiles can opt into a separate host command.
  */
 let handoff
 const react = {
@@ -12,6 +12,7 @@ const react = {
   useRef(value) { return { current: value } },
   useEffect() {},
 }
+const RecapIcon = () => null
 const importBundle = async () => {
   if (handoff !== undefined) return handoff
   globalThis.window = {
@@ -37,6 +38,7 @@ const loadBundle = async () => {
   const loaded = await importBundle()
   return loaded.factory((name) => {
     if (name === 'react') return react
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { IconListPenOutline16: RecapIcon }
     throw new Error('unexpected require: ' + name)
   })
 }
@@ -53,7 +55,7 @@ const mount = (module, posted) => {
     inject(names, setup) {
       assert.ok(names.includes('commandUi'))
       setup({
-        get() { return { decorate(value) { contrib.value = value; return () => {} } } },
+        get() { return { register(value) { contrib.value = value; return () => {} } } },
         effect(setup2) { setup2() },
       })
     },
@@ -65,7 +67,7 @@ const mount = (module, posted) => {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
-test('the host slash command is decorated once and posts the manual action', async () => {
+test('the Web slash command keeps its localized official row and posts the manual action', async () => {
   const posted = []
   globalThis.fetch = async (url, options) => {
     posted.push({ url, method: options.method })
@@ -76,8 +78,13 @@ test('the host slash command is decorated once and posts the manual action', asy
   const dict = dictionaries['@dsh-external/dsh-session-recap']
   assert.deepEqual(Object.keys(dict.zh).sort(), Object.keys(dict.en).sort())
   assert.ok('failed' in dict.zh && 'failed' in dict.en)
+  assert.equal(dict.zh.commandLabel, '会话回顾')
+  assert.match(dict.zh.commandDescription, /当前任务/)
 
   assert.equal(contrib.value.name, 'recap')
+  assert.equal(contrib.value.label(), 'commandLabel')
+  assert.equal(contrib.value.description(), 'commandDescription')
+  assert.equal(contrib.value.icon, RecapIcon)
   assert.equal(contrib.value.ui.kind, 'action')
   assert.equal(contrib.value.available({ sessionId: 'session-1' }), true)
 
@@ -90,7 +97,7 @@ test('the host slash command is decorated once and posts the manual action', asy
   await tick()
 })
 
-test('mounting the decoration performs no ownership probe or duplicate registration', async () => {
+test('mounting the contribution performs no ownership probe', async () => {
   let calls = 0
   globalThis.fetch = async () => { calls++; return { ok: false, json: async () => null } }
   const { contrib } = mount(await loadBundle(), [])

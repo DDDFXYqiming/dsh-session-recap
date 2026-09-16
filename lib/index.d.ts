@@ -11,16 +11,20 @@
  * @module @dsh-external/dsh-session-recap
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { z as zod } from 'zod';
 import type LlmService from '@deepseek-ai/dsh-llm';
 import type { Message } from '@deepseek-ai/dsh-llm';
 import type { IncomingMessage } from 'node:http';
+import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
 export declare const name = "@dsh-external/dsh-session-recap";
-/** `llm` is accessed directly by the host generation paths. */
+/** `llm` generates recaps; `sessionProjections` supplies current durable turn state. */
 export declare const inject: string[];
 export interface Config {
     /** Automatic recap toggle; manual `/recap` remains available. */
     enabled: boolean;
+    /** Register the host `/recap` command for profiles without the Web client. */
+    hostCommand: boolean;
     /** Away window after a completed turn before auto-generating a recap (ms). */
     idleMs: number;
     /** Minimum completed turns before any automatic recap is generated. */
@@ -47,6 +51,7 @@ export interface Config {
 }
 export declare const Config: z<Schemastery.ObjectS<{
     enabled: z<boolean, boolean>;
+    hostCommand: z<boolean, boolean>;
     idleMs: z<number, number>;
     minTurns: z<number, number>;
     recentMessages: z<number, number>;
@@ -61,6 +66,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     stopSequences: z<string[], string[]>;
 }>, Schemastery.ObjectT<{
     enabled: z<boolean, boolean>;
+    hostCommand: z<boolean, boolean>;
     idleMs: z<number, number>;
     minTurns: z<number, number>;
     recentMessages: z<number, number>;
@@ -82,6 +88,20 @@ type ClientPresence = {
     sequence: number;
     expiresAt: number;
 };
+type RecapSessionState = {
+    openTurn: boolean;
+    completedTurns: number;
+    lastTurnEnd: {
+        seq: number;
+        time: number;
+        completed: boolean;
+    } | null;
+};
+declare module '@deepseek-ai/dsh-session-projection/types' {
+    interface SessionProjectionStateMap {
+        sessionRecap: RecapSessionState;
+    }
+}
 /** Extract readable context from provider-neutral message content. */
 declare function contentText(content: unknown): string;
 /** Keep both the beginning (goal) and end (next action) when bounding text. */
@@ -122,6 +142,21 @@ export declare const internals: {
     presenceIsAway: typeof presenceIsAway;
     nextPresenceExpiry: typeof nextPresenceExpiry;
     allowedLoopbackRequest: typeof allowedLoopbackRequest;
+    recapProjectionDefinition: {
+        key: "sessionRecap";
+        stateVersion: number;
+        stateSchema: zod.ZodObject<{
+            openTurn: zod.ZodBoolean;
+            completedTurns: zod.ZodNumber;
+            lastTurnEnd: zod.ZodNullable<zod.ZodObject<{
+                seq: zod.ZodNumber;
+                time: zod.ZodNumber;
+                completed: zod.ZodBoolean;
+            }, zod.core.$strip>>;
+        }, zod.core.$strip>;
+        init: () => RecapSessionState;
+        apply: (state: RecapSessionState, event: SessionEvent) => RecapSessionState;
+    };
     systemPrompt: typeof systemPrompt;
     languageDirective: typeof languageDirective;
 };
