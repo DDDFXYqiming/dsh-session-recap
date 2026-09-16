@@ -19,7 +19,7 @@ People step away from the screen for all sorts of reasons, and the session is st
 - Shows a failed manual recap in that same card (localized failure badge plus the error text) instead of a command-result row.
 - Writes the recap in the language the user writes in; the English prompt does not force English output.
 - Legacy-model-service compatible: chain-of-thought inlined into the text as think / thinking / thought tag blocks is stripped before it reaches the recap input or the recap card.
-- Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 400 characters.
+- Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 1,200 characters by default.
 - Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
 - Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
 - Aggregates presence by Session and page client, with monotonic sequence numbers, heartbeats, and leases, so closing one background tab cannot override a foreground tab.
@@ -72,7 +72,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
     minTurns: 3          # minimum completed turns for automatic recaps
     recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
-    maxChars: 400        # recap text limit
+    maxChars: 1200       # recap text limit
     maxInputChars: 24000 # recap input limit in bytes
     maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000
@@ -101,7 +101,7 @@ The sidecar stores the current recap text, generation time, and completed-turn a
 | dsh-session-recap | `0.1.7` (`package.json`) |
 | DeepSeek Harness packages | `0.1.2-rc.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
-| Surface | DSH Web profile with LLM, session, commands, locale, conversation, slots, and Web-server services |
+| Surface | Any DSH profile with LLM, session, and commands services. The Web card additionally needs locale, conversation, slots, and Web-server services |
 
 ## Development and validation
 

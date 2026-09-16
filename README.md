@@ -4,11 +4,11 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前版本：**0.1.7**（适配 DSH `0.1.2-rc.1`，并以官方 GitHub `master@0d1f500` 做源码兼容核对）。事件读取改用 `Session.snapshotEvents()`；构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前版本为 **0.1.7**，适配 DSH `0.1.2-rc.1`，并以官方 GitHub `master@0d1f500` 做源码兼容核对。事件读取改用 `Session.snapshotEvents()`；构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
-人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。离开一段时间后回来，先读一段短回顾，再决定从哪里继续——这个插件把这段行为带进 DSH Web。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
+人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。这个插件让用户回来时先读一段短回顾，再决定从哪里继续。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
 
 ## 能力
 
@@ -18,8 +18,8 @@
 - `/recap` 始终由宿主命令持有；Web 客户端只用官方 `commandUi.decorate()` 接管裸命令的卡片动作，因此热更新期间也不会出现两个同名所有者。没有 Web 客户端时，命令结果会直接返回回顾正文。
 - 手动回顾失败时，错误直接显示在同一张卡片里（本地化的失败角标加错误正文），不再产生命令结果行。
 - 回顾正文跟随会话里用户消息的语言，英文提示词不会强制英文输出。
-- 兼容旧模型服务：思考过程以 think / thinking / thought 标签块内联在正文里时（无独立 reasoning 通道），这些块在进入回顾输入和回顾卡片前都会被剥掉。
-- 自动回顾以带“回顾 / Recap”标题和关闭按钮的卡片显示在 Web 对话输入框上方，最长 400 字符。
+- 插件兼容旧模型服务。思考过程以 think / thinking / thought 标签块内联在正文里时（无独立 reasoning 通道），这些块在进入回顾输入和回顾卡片前都会被剥掉。
+- 自动回顾以带“回顾 / Recap”标题和关闭按钮的卡片显示在 Web 对话输入框上方，默认上限为 1200 字符。
 - 横幅按会话与回顾对应的完成轮次隔离；关闭后切换会话再切回，横幅不会重新出现。
 - 发送新消息、切换会话或关闭横幅后，当前回顾会隐藏；后台标签页在重新可见时显示。
 - 多标签页 presence 按“会话＋页面客户端”聚合，并带递增序号、心跳和有限期租约；关闭一个后台标签不会覆盖仍在前台使用的页面。
@@ -50,7 +50,7 @@ npm install && npm run build
 dsh plugin --profile web add <本目录绝对路径>
 ```
 
-GitHub 安装会触发 `prepare` 脚本重新构建 `lib/`。pnpm ≥10 首次 `add` 会拒绝运行该构建脚本：把 pnpm 打印的包键复制进 profile 的 `pnpm-workspace.yaml` 后重新 `add` 即可，例如：
+GitHub 安装会触发 `prepare` 脚本重新构建 `lib/`。pnpm ≥10 首次 `add` 会拒绝运行该构建脚本。把 pnpm 打印的包键复制进 profile 的 `pnpm-workspace.yaml` 后重新 `add` 即可。下面是一份示例。
 
 ```yaml
 allowBuilds:
@@ -72,7 +72,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
     minTurns: 3          # 自动回顾所需的最少完成轮数
     recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
-    maxChars: 400        # 回顾文本上限
+    maxChars: 1200       # 回顾文本上限
     maxInputChars: 24000 # 回顾输入上限（字节）
     maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
     timeoutMs: 30000
@@ -83,7 +83,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     stopSequences: []    # 可选停止词列表
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算：预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算。预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
 
 ## 存储布局
 
@@ -101,7 +101,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 | dsh-session-recap | `0.1.7`（`package.json`） |
 | DeepSeek Harness packages | `0.1.2-rc.1` |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
-| 使用面 | DSH Web profile；需要 LLM、session、commands、locale、conversation、slots 和 web-server 服务 |
+| 使用面 | 所有提供 LLM、session 和 commands 服务的 DSH profile。Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
 
 ## 开发与验证
 
@@ -122,7 +122,7 @@ npm pack
 ## 相关
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)：同一行为在 Pi Coding Agent TUI 上的实现
+- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)，同一行为在 Pi Coding Agent TUI 上的实现
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
 ## 授权

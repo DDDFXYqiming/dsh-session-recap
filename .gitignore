@@ -2,3 +2,23 @@ node_modules/
 *.tsbuildinfo
 *.tgz
 package-lock.json
+
+# 本地环境与密钥文件
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# 测试、编辑器与临时产物
+coverage/
+.nyc_output/
+.cache/
+.idea/
+.vscode/
+.DS_Store
+*.log
+tmp/
+temp/
