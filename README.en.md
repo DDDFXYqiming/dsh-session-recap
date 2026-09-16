@@ -4,7 +4,7 @@
 
 **A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-The plugin is currently at **0.1.7**, with DSH **0.1.6-alpha.1** as its runtime and development baseline. Turn state is maintained through the official `sessionProjections` service; the plugin no longer reads the deprecated `Session.snapshotEvents()` API directly. Builds run through Node on Windows and Linux.
+The plugin is currently at **0.1.7**, targeting DSH **0.1.6-alpha.1**. Builds run through Node on Windows and Linux.
 
 ## Why this plugin exists
 
@@ -12,27 +12,18 @@ People step away from the screen for all sorts of reasons, and the session is st
 
 ## Capabilities
 
-- Generates automatically only while the Web window is unfocused or the session is not selected; simple focused-window idleness never spends an LLM call.
-- By default, requires at least three completed turns and three minutes since the latest completed turn, and never generates twice for the same turn. These two gates keep a brief distraction from producing a pointless recap.
-- Provides `/recap` on demand through the same recap card; disabling automatic recaps does not disable the command.
-- In a Web profile, the client contribution owns `/recap` and supplies the official command-row layout, icon, localized title, and description. The same-named host command is disabled by default, avoiding catalog collisions; a headless profile can explicitly enable `hostCommand` and receive the recap as command-result text.
-- Shows a failed manual recap in that same card (localized failure badge plus the error text) instead of a command-result row.
-- Writes the recap in the language the user writes in; the English prompt does not force English output.
-- Legacy-model-service compatible: chain-of-thought inlined into the text as think / thinking / thought tag blocks is stripped before it reaches the recap input or the recap card.
-- Renders automatic output as a card with a localized Recap badge and dismiss button above the Web conversation composer, capped at 1,200 characters by default.
-- Scopes dismissal to the session and the completed turn represented by that recap; switching sessions does not resurrect a dismissed banner.
-- Hides the current recap after a new message, session switch, or manual dismissal; hidden tabs display it when visible again.
-- Aggregates presence by Session and page client, with monotonic sequence numbers, heartbeats, and leases, so closing one background tab cannot override a foreground tab.
-- Includes English and Simplified Chinese UI labels; reuses the session's latest effective provider/model by default, with optional overrides for model, reasoning effort, temperature, output budget, stop sequences, and timeout.
-- Stores recap state in a plugin sidecar instead of adding plugin-defined events to the DSH append-only session log.
+- Generates automatically after you leave the Web page or switch sessions, once `idleMs` and `minTurns` are satisfied; focused-window idleness never spends an LLM call.
+- Runs `/recap` on demand. The Web menu keeps the official icon, English and Chinese labels, and description; a headless profile can enable `hostCommand` to receive plain text.
+- Shows the recap above the composer and lets you dismiss it. A new message or session switch hides it, and each session keeps only its current recap.
+- Drops tool output, keeps the compaction summary, and anchors the task on the newest real user message. The recap follows the user's language, and inline think tags from older model services are removed.
+- Aggregates presence across page clients with heartbeats and leases, and discards a result when the session changes while it is being generated.
+- Stores results in the plugin sidecar without changing the DSH session log. Provider, model, output size, and timeout are configurable.
 
 ## How it works
 
-1. Each Web page gets a client ID and reports sequenced `active` / `away` presence for focus, visibility, and session switches. Heartbeats renew a bounded lease; the Host marks the Session away only when every live client is away.
-2. The host starts an automatic recap only when the session is `away`, the latest completed `turn/end` is at least `idleMs` old, and `minTurns` is satisfied. All three conditions must hold before any request goes out, so a brief distraction triggers nothing.
-3. The plugin drops tool-result messages, retains the official compact checkpoint as an explicitly labeled history summary, and anchors the current task on the newest real-user request. The history summary is never treated as the user's own language sample.
-4. If a new turn starts, a newer turn completes, or the session is disposed while the request is running, the stale result is cancelled or discarded. What you see on return always matches the current progress.
-5. Automatic and manual `/recap` results are stored in a local sidecar. Web writes require the same protocol, host, and port as DSH; headless commands deliver the result through `CommandResult.text`. Neither path appends recap text to conversation history.
+1. The Web client reports `active` / `away` for each page and session. The Host marks a session away only after all valid pages have left.
+2. The Host checks `idleMs`, `minTurns`, and the latest completed turn, then sends a bounded transcript to the auxiliary model.
+3. A new turn, session advance, or disposal invalidates the old result. Valid output goes to the sidecar and is shown in the Web card or through `CommandResult.text`.
 
 ## Installation
 
