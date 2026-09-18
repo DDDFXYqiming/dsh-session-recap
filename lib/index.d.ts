@@ -134,6 +134,18 @@ declare function framedTranscriptHasContent(framed: string): boolean;
  * assistant mirrors the user). No language names, no classification in code.
  */
 declare function languageDirective(samples: readonly string[]): string;
+/**
+ * 自动回顾只服务用户真正在看的交互会话。Agent Teams 开启后同一进程内会并发存在 teammate
+ * 会话（`header.parentSession` 非空，与 subagent 子会话同形），它们各自发 turn/end；一旦
+ * 用户在 Team 面板里打开过某个 teammate 会话，presence 就挂到该子会话 id 上，使其永久满足
+ * 「离开后自动生成」的条件，每个完成回合都会多出一条隐藏的 recap LLM 调用。子会话一律不自动
+ * 武装，手动 /recap 不受此限。headless 一次性会话与无 header 的旧调用形状仍算交互会话。
+ */
+export declare function isInteractiveSession(session: {
+    header?: {
+        parentSession?: unknown;
+    };
+}): boolean;
 export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
@@ -146,6 +158,7 @@ export declare const internals: {
     presenceIsAway: typeof presenceIsAway;
     nextPresenceExpiry: typeof nextPresenceExpiry;
     allowedLoopbackRequest: typeof allowedLoopbackRequest;
+    isInteractiveSession: typeof isInteractiveSession;
     recapProjectionDefinition: {
         key: "sessionRecap";
         stateVersion: number;

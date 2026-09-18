@@ -15,6 +15,7 @@ const {
   presenceIsAway,
   nextPresenceExpiry,
   allowedLoopbackRequest,
+  isInteractiveSession,
 } = internals
 
 const user = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
@@ -25,6 +26,15 @@ const compact = (text) => ({ role: 'user', source: { kind: 'plugin', plugin: 'co
 
 let checks = 0
 const check = (name, fn) => { fn(); checks += 1; console.log('PASS ' + name) }
+
+check('automatic recap never arms for subagent / Agent Team teammate sessions', () => {
+  // 交互会话：无 parentSession（含 headless 一次性会话与无 header 的旧调用形状）
+  assert.equal(isInteractiveSession({ id: 'lead', header: {} }), true)
+  assert.equal(isInteractiveSession({ id: 'plain' }), true)
+  // 子会话：Agent Team teammate 与 subagent 子会话同形，一律排除在自动武装之外
+  assert.equal(isInteractiveSession({ id: 't', header: { parentSession: 'lead' } }), false)
+  assert.equal(isInteractiveSession({ id: 't', header: { parentSession: '' } }), false)
+})
 
 check('tool results never enter the recap window or the byte budget', () => {
   const transcript = frameTranscript([
