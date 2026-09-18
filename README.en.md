@@ -105,7 +105,7 @@ npm install
 npm run typecheck
 npm run build
 npm test
-npm run test:upstream # set DSH_UPSTREAM_ROOT; defaults to dsh-v0.1.6-alpha.1
+npm run test:upstream # self-skips without DSH_UPSTREAM_ROOT; defaults to dsh-v0.1.6-alpha.1
 npm run build:client
 npm pack
 ```

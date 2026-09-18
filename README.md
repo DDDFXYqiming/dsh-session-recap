@@ -105,7 +105,7 @@ npm install
 npm run typecheck
 npm run build
 npm test
-npm run test:upstream # 需设置 DSH_UPSTREAM_ROOT；默认核对 dsh-v0.1.6-alpha.1
+npm run test:upstream # 未设置 DSH_UPSTREAM_ROOT 时自动跳过；默认核对 dsh-v0.1.6-alpha.1
 npm run build:client
 npm pack
 ```
