@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前插件版本为 **0.1.7**，适配 DSH `0.1.6-alpha.1`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前插件版本为 **0.1.7**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -93,7 +93,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 | 项目 | 版本或范围 |
 | --- | --- |
 | dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | `0.1.6-alpha.1` |
+| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0`（peerDependencies）；构建与测试钉在 `0.1.6-alpha.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），`0.1.6-alpha.2` 宿主实测运行 |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
 
