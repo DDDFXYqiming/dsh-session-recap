@@ -494,6 +494,10 @@ async function generateRecap(
   })]
   const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
   if (first !== undefined) return first
+  // Escalation policy constants, not deployment knobs: the 4x factor, the 2048
+  // floor, and the 4096 ceiling that mirrors the maxOutputTokens schema maximum.
+  // DSH keeps strategy constants fixed and moves tunables to Config; the retry
+  // ladder is also documented in the README.
   const escalated = Math.min(4096, Math.max(2048, config.maxOutputTokens * 4))
   const exhausted = (budget: number) => new Error(
     `dsh-session-recap: recap output reached maxOutputTokens (${budget}) with no text — the recap route spends the budget on reasoning. ` +

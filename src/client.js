@@ -34,6 +34,10 @@ window.__ModuleLoader__.load({
       '.sr-recap-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}',
     ].join('\n')
     var styleId = NS + '/recap.css'
+    // Style lifecycle: the data-plugin-css marker makes re-materialization
+    // idempotent, but the host loader only reclaims styles it creates itself, so
+    // disposing the plugin leaves these rules on the page until the next page
+    // refresh. With the banner DOM gone they render nothing.
     if (typeof document !== 'undefined') {
       var style = document.querySelector('style[data-plugin-css="' + styleId + '"]')
       if (style === null) {
