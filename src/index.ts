@@ -635,8 +635,11 @@ function mountWebRoute(
         if (!allowedLoopbackRequest(req, method === 'POST')) return sendJson(res, 403, { error: 'forbidden origin' })
         const url = new URL(req.url ?? RECAP_ROUTE, 'http://localhost')
         const rawSessionId = url.searchParams.get('sessionId')
-        if (rawSessionId === null || rawSessionId === '' || rawSessionId.length > 256) {
+        if (rawSessionId === null || rawSessionId === '') {
           return sendJson(res, 400, { error: 'sessionId is required' })
+        }
+        if (rawSessionId.length > 256) {
+          return sendJson(res, 400, { error: 'sessionId is invalid' })
         }
         const session = webCtx.sessions.get(rawSessionId as Session['id'])
         if (method === 'POST') {
