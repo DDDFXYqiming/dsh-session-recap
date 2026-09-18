@@ -89,6 +89,10 @@ The bundle supplies the default entry. To override it, use this bare entry in th
 
 The sidecar stores the current recap text, generation time, and completed-turn anchor. The DSH session log is append-only, and the plugin neither extends its event vocabulary nor writes plugin-defined events into it. Stale recaps are removed after the session advances, so each session keeps only its current recap on disk.
 
+## Security boundary
+
+The `/api/dsh-session-recap` route accepts loopback connections only: it validates the remote address, the `Host` header, and the `Origin`. `Host` is matched by an anchored regex, blocking DNS rebinding; cross-port, cross-scheme, and forged-`Host` requests are rejected. The write side (POST presence reports and manual generation) requires an exact same-origin browser `Origin`, and an invalid origin never starts generation. The read side (GET) does not require an `Origin`: any local process that reaches the port and passes the address and `Host` checks can read a session's recap text, which is equivalent to reading the plugin sidecar file directly and adds no further exposure. The route is exempt from host authentication by design; its trust rests entirely on the loopback and origin checks above. It never touches credentials and never returns raw session logs; responses carry no CORS headers and set `Cache-Control: no-store` plus `X-Content-Type-Options: nosniff`.
+
 ## Compatibility
 
 | Item | Version or scope |

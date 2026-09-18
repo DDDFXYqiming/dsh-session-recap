@@ -89,6 +89,10 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
 
 sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。DSH 的 session log 是 append-only 的，插件不改它的事件词汇，也不往里写自定义事件。旧回顾会被清理。会话前进后，每个会话留下的始终是当前那一份回顾。
 
+## 安全边界
+
+`/api/dsh-session-recap` route 仅接受 loopback 连接：校验远端地址、`Host` 头与 `Origin`。`Host` 用锚定正则匹配，阻断 DNS rebinding；跨端口、跨协议与伪造 Host 的请求一律拒绝。写入面 POST（presence 上报与手动生成）强制要求精确同源的浏览器 `Origin`，非法来源不会触发生成。读取面 GET 不要求 `Origin`：任何能访问该本机端口、且能通过地址与 Host 校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述 loopback 与同源校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
+
 ## 兼容性
 
 | 项目 | 版本或范围 |
