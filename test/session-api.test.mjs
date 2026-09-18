@@ -193,7 +193,7 @@ test('a web profile omits the host slash command and generates manual recaps thr
       assert.equal(command, undefined, order.join('>') + ': no host slash owner is registered')
       assert.equal(typeof route, 'function', order.join('>') + ': the web route is mounted')
       await route({ ...req, method: 'GET', url: '/api/dsh-session-recap?sessionId=' + session.id }, res)
-      assert.deepEqual(responses.shift(), { status: 200, body: { recap: null } })
+      assert.deepEqual(responses.shift(), { status: 200, body: { recap: null, manualRequestTimeoutMs: 70000 } })
       await route({ ...req, headers: { ...req.headers, origin: 'http://localhost:5173' } }, res)
       assert.deepEqual(responses.shift(), { status: 403, body: { error: 'forbidden origin' } })
       assert.equal(calls, 0, 'cross-origin write never starts generation')

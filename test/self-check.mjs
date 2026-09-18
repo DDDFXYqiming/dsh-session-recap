@@ -90,6 +90,12 @@ check('maxOutputTokens default raised to 2048 and Config fills it', () => {
   assert.equal(Config({}).maxOutputTokens, 2048)
 })
 
+check('manualRequestTimeoutMs default covers 2x timeoutMs plus margin', () => {
+  assert.equal(Config.dict.manualRequestTimeoutMs.meta.default, 70000)
+  assert.equal(Config({}).manualRequestTimeoutMs, 70000)
+  assert.ok(Config({}).manualRequestTimeoutMs > 2 * Config({}).timeoutMs)
+})
+
 check('trimToSentence keeps only complete sentences, never cuts decimals', () => {
   assert.equal(trimToSentence('修复了问题。然后开始测试下一个'), '修复了问题。')
   assert.equal(trimToSentence('耗时 1.5 秒的模板路径'), '耗时 1.5 秒的模板路径')

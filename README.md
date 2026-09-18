@@ -68,6 +68,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     maxInputChars: 24000 # 回顾输入上限（字节）
     maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
     timeoutMs: 30000
+    manualRequestTimeoutMs: 70000 # 浏览器手动 /recap 等待结果的超时（毫秒）；生成最长约 2×timeoutMs，放弃等待不影响服务端继续生成
     provider: ''         # 留空：复用会话最近实际使用的 provider
     model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
     reasoningEffort: ''  # 留空：插件不传思考等级；也可填写目标适配器支持的 id

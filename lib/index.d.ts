@@ -39,6 +39,8 @@ export interface Config {
     maxOutputTokens: number;
     /** Timeout for one recap generation call (ms). */
     timeoutMs: number;
+    /** Abort deadline the Web client applies to a manual /recap request (ms). */
+    manualRequestTimeoutMs: number;
     /** Optional fixed route; both provider and model must be set together. */
     provider: string;
     model: string;
@@ -59,6 +61,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxInputChars: z<number, number>;
     maxOutputTokens: z<number, number>;
     timeoutMs: z<number, number>;
+    manualRequestTimeoutMs: z<number, number>;
     provider: z<string, string>;
     model: z<string, string>;
     reasoningEffort: z<string, string>;
@@ -74,6 +77,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxInputChars: z<number, number>;
     maxOutputTokens: z<number, number>;
     timeoutMs: z<number, number>;
+    manualRequestTimeoutMs: z<number, number>;
     provider: z<string, string>;
     model: z<string, string>;
     reasoningEffort: z<string, string>;

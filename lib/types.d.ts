@@ -15,4 +15,6 @@ export interface RecapProjection {
 /** Response returned by the same-origin recap route. */
 export interface RecapResponse {
     recap: RecapProjection | null;
+    /** Live Config.manualRequestTimeoutMs; the Web client applies it as the manual /recap POST deadline. */
+    manualRequestTimeoutMs: number;
 }

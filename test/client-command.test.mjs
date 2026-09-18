@@ -70,7 +70,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve))
 test('the Web slash command keeps its localized official row and posts the manual action', async () => {
   const posted = []
   globalThis.fetch = async (url, options) => {
-    posted.push({ url, method: options.method })
+    posted.push({ url, method: options.method, hasDeadline: options.signal instanceof AbortSignal })
     return { ok: true, json: async () => ({ ok: true }) }
   }
   const { dictionaries, contrib } = mount(await loadBundle(), posted)
@@ -90,7 +90,7 @@ test('the Web slash command keeps its localized official row and posts the manua
 
   contrib.value.ui.run({ sessionId: 'session-1' })
   await tick()
-  assert.deepEqual(posted, [{ url: '/api/dsh-session-recap?sessionId=session-1&action=generate', method: 'POST' }])
+  assert.deepEqual(posted, [{ url: '/api/dsh-session-recap?sessionId=session-1&action=generate', method: 'POST', hasDeadline: true }])
 
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ error: 'Recap failed: another recap is already generating' }) })
   contrib.value.ui.run({ sessionId: 'session-1' })

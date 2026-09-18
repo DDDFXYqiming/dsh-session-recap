@@ -50,6 +50,8 @@ export interface Config {
   maxOutputTokens: number
   /** Timeout for one recap generation call (ms). */
   timeoutMs: number
+  /** Abort deadline the Web client applies to a manual /recap request (ms). */
+  manualRequestTimeoutMs: number
   /** Optional fixed route; both provider and model must be set together. */
   provider: string
   model: string
@@ -71,6 +73,7 @@ export const Config = z.object({
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
   maxOutputTokens: z.number().step(1).min(16).max(4096).default(2048).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; complete sentences survive exhaustion, otherwise one escalated retry runs.'),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
+  manualRequestTimeoutMs: z.number().step(1).min(5000).max(600000).default(70000).description('Abort deadline for the browser POST that starts a manual /recap, in milliseconds. Generation can take up to 2x timeoutMs (first pass plus one escalated retry); raise this together with timeoutMs. Giving up never cancels server-side generation - the recap still arrives through the route poll.'),
   provider: z.string().default('').description('Optional fixed provider; set together with model. Empty reuses the session route.'),
   model: z.string().default('').description('Optional fixed model; set together with provider. Empty reuses the session route.'),
   reasoningEffort: z.string().default('').description('Optional adapter-owned effort id. Empty sends no reasoningEffort.'),
@@ -616,6 +619,7 @@ function mountWebRoute(
   store: RecapStore,
   setPresence: (session: Session, clientId: string, sequence: number, active: boolean) => void,
   generate: (session: Session, signal: AbortSignal) => Promise<CommandResult>,
+  config: Config,
 ): void {
   webCtx.effect(() => {
     const dispose = webCtx.webServer.register({
@@ -665,6 +669,7 @@ function mountWebRoute(
         }
         const body: RecapResponse = {
           recap: session === undefined ? null : currentRecap(webCtx, store, session),
+          manualRequestTimeoutMs: config.manualRequestTimeoutMs,
         }
         if (method === 'HEAD') {
           res.writeHead(200, {
@@ -861,7 +866,7 @@ export function apply(ctx: AppContext, config: Config): void {
   // Automatic recaps require interactive Web presence. Headless profiles can
   // opt into a host command, whose text result is their delivery surface.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
-    mountWebRoute(webCtx as WebContext, store, setPresence, generateManual)
+    mountWebRoute(webCtx as WebContext, store, setPresence, generateManual, config)
   })
 
   ctx.inject(['commands'], (commandCtx) => {

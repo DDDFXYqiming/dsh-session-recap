@@ -68,6 +68,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     maxInputChars: 24000 # recap input limit in bytes
     maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000
+    manualRequestTimeoutMs: 70000 # browser deadline (ms) for waiting on a manual /recap; generation can take up to 2x timeoutMs, and giving up never cancels server-side generation
     provider: ''         # empty: reuse the session's latest effective provider
     model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
     reasoningEffort: ''  # empty: the plugin sends no effort; otherwise use an id supported by the target adapter

@@ -16,6 +16,10 @@ window.__ModuleLoader__.load({
     var POLL_MS = 2000
     var POLL_TIMEOUT_MS = 4000
     var PRESENCE_HEARTBEAT_MS = 15000
+    // Manual /recap POST deadline (ms). Mirrors the Config.manualRequestTimeoutMs
+    // default; every route poll refreshes it from the host's live value, so a
+    // raised server-side timeoutMs extends this deadline too.
+    var manualRequestTimeoutMs = 70000
     var presenceClientId = createPresenceClientId()
     var presenceSequence = 0
     var dismissedStoragePrefix = 'dsh-session-recap:dismissed:'
@@ -120,7 +124,11 @@ window.__ModuleLoader__.load({
       if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
       var key = String(sessionId)
       var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(key) + '&action=generate'
-      fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+      // Same lesson as the 006 poll deadline: a hot-reloaded host can abandon
+      // this POST without ever settling it, leaving the user no outcome at all.
+      // The deadline only ends the browser's wait; the host keeps generating on
+      // its own signal, so the recap still surfaces through the next poll.
+      fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(manualRequestTimeoutMs) })
         .then(function (response) { return response.json().catch(function () { return null }) })
         .then(function (body) {
           if (body !== null && body.ok === true) {
@@ -235,6 +243,9 @@ window.__ModuleLoader__.load({
             })
             .then(function (body) {
               if (cancelled || body === null) return
+              if (typeof body.manualRequestTimeoutMs === 'number' && body.manualRequestTimeoutMs > 0) {
+                manualRequestTimeoutMs = body.manualRequestTimeoutMs
+              }
               setLoadedRecap({ owner: sessionKey, value: validRecap(body.recap) })
             })
             .catch(function () {})
