@@ -52,6 +52,8 @@ Treat this approval as "let this package run code on your machine at install tim
 
 The package includes `cordis.patch.yml`, which contributes the `dsh-session-recap` bundle entry automatically. Restart the Web profile after the first installation, then refresh the page.
 
+See [development](docs/development.md) for the full build, test and upstream-structure commands.
+
 ## Configuration
 
 The bundle supplies the default entry. To override it, use this bare entry in the profile's `cordis.patch.yml`.
@@ -101,22 +103,6 @@ The `/api/dsh-session-recap` route accepts loopback connections only: it validat
 | DeepSeek Harness packages | Compatible range `>=0.1.6-alpha.1 <0.2.0-0` (peerDependencies); builds and tests pin `0.1.6-alpha.1` (devDependencies/overrides, for reproducible builds and git-hosted install resolution), verified running on `0.1.6-alpha.2` hosts |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | Any DSH profile with LLM and session-projection services. The host command additionally needs commands; the Web card needs locale, conversation, slots, and Web-server services |
-
-## Development and validation
-
-```bash
-npm install
-npm run typecheck
-npm run build
-npm test
-npm run test:upstream # self-skips without DSH_UPSTREAM_ROOT; defaults to dsh-v0.1.6-alpha.1
-npm run build:client
-npm pack
-```
-
-The build helper prefers local dependencies. When developing against a DSH checkout, set `DSH_CHECKOUT`, or set `DSH_GLOBAL_NODE_MODULES` to a compatible global `node_modules` directory. It only creates missing links and leaves existing packages untouched. The upstream structural tests use the `dsh-v0.1.6-alpha.1` release tag by default; set `DSH_UPSTREAM_REF` to a branch, tag, or commit when checking newer source instead of presenting a moving `master` ref as a permanent fact.
-
-The plugin does not import the host's internal `deepFreeze` helper. It freezes request options locally and therefore does not depend on that helper's package location.
 
 ## Related
 

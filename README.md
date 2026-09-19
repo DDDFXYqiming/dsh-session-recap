@@ -52,6 +52,8 @@ allowBuilds:
 
 插件自带 `cordis.patch.yml`，安装后会自动加入 `dsh-session-recap` bundle 条目。首次安装后重启 Web profile，再刷新页面。
 
+从源码构建、测试与上游结构核对的完整命令见 [开发与验证](docs/development.md)。
+
 ## 配置
 
 bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目。
@@ -98,25 +100,9 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 | 项目 | 版本或范围 |
 | --- | --- |
 | dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0`（peerDependencies）；构建与测试钉在 `0.1.6-alpha.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），`0.1.6-alpha.2` 宿主实测运行 |
+| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0`（peerDependencies）；构建与测试钉在 `0.1.6-alpha.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），`0.1.6-alpha.2` 已通过运行验证 |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
-
-## 开发与验证
-
-```bash
-npm install
-npm run typecheck
-npm run build
-npm test
-npm run test:upstream # 未设置 DSH_UPSTREAM_ROOT 时自动跳过；默认核对 dsh-v0.1.6-alpha.1
-npm run build:client
-npm pack
-```
-
-构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。上游结构测试默认使用发布标签 `dsh-v0.1.6-alpha.1`；需要检查更新的源码时可通过 `DSH_UPSTREAM_REF` 指定分支、标签或提交，不在文档中把会移动的 `master` 写成固定事实。
-
-插件不调用宿主的 `deepFreeze`。请求选项的冻结由插件内本地实现完成，避免依赖这个内部导出的迁移位置。
 
 ## 相关
 
