@@ -58,39 +58,39 @@ export interface Config {
     /** Optional stop sequences passed to the recap model. */
     stopSequences: string[];
 }
-export declare const Config: z<Schemastery.ObjectS<{
-    enabled: z<boolean, boolean>;
-    hostCommand: z<boolean, boolean>;
-    idleMs: z<number, number>;
-    minTurns: z<number, number>;
-    recentMessages: z<number, number>;
-    maxChars: z<number, number>;
-    maxInputChars: z<number, number>;
-    maxOutputTokens: z<number, number>;
-    timeoutMs: z<number, number>;
-    manualRequestTimeoutMs: z<number, number>;
-    provider: z<string, string>;
-    model: z<string, string>;
-    reasoningEffort: z<string, string>;
-    temperature: z<number, number>;
-    stopSequences: z<string[], string[]>;
-}>, Schemastery.ObjectT<{
-    enabled: z<boolean, boolean>;
-    hostCommand: z<boolean, boolean>;
-    idleMs: z<number, number>;
-    minTurns: z<number, number>;
-    recentMessages: z<number, number>;
-    maxChars: z<number, number>;
-    maxInputChars: z<number, number>;
-    maxOutputTokens: z<number, number>;
-    timeoutMs: z<number, number>;
-    manualRequestTimeoutMs: z<number, number>;
-    provider: z<string, string>;
-    model: z<string, string>;
-    reasoningEffort: z<string, string>;
-    temperature: z<number, number>;
-    stopSequences: z<string[], string[]>;
-}>>;
+export declare const Config: z<Schemastery.ObjectS<NoInfer<{
+    enabled: z<boolean, boolean, "defined">;
+    hostCommand: z<boolean, boolean, "defined">;
+    idleMs: z<number, number, "defined">;
+    minTurns: z<number, number, "defined">;
+    recentMessages: z<number, number, "defined">;
+    maxChars: z<number, number, "defined">;
+    maxInputChars: z<number, number, "defined">;
+    maxOutputTokens: z<number, number, "defined">;
+    timeoutMs: z<number, number, "defined">;
+    manualRequestTimeoutMs: z<number, number, "defined">;
+    provider: z<string, string, "defined">;
+    model: z<string, string, "defined">;
+    reasoningEffort: z<string, string, "defined">;
+    temperature: z<number, number, "plain">;
+    stopSequences: z<string[], string[], "defined">;
+}>>, Schemastery.ObjectT<NoInfer<{
+    enabled: z<boolean, boolean, "defined">;
+    hostCommand: z<boolean, boolean, "defined">;
+    idleMs: z<number, number, "defined">;
+    minTurns: z<number, number, "defined">;
+    recentMessages: z<number, number, "defined">;
+    maxChars: z<number, number, "defined">;
+    maxInputChars: z<number, number, "defined">;
+    maxOutputTokens: z<number, number, "defined">;
+    timeoutMs: z<number, number, "defined">;
+    manualRequestTimeoutMs: z<number, number, "defined">;
+    provider: z<string, string, "defined">;
+    model: z<string, string, "defined">;
+    reasoningEffort: z<string, string, "defined">;
+    temperature: z<number, number, "plain">;
+    stopSequences: z<string[], string[], "defined">;
+}>>, "plain">;
 type AppContext = Context & {
     llm: LlmService;
 };
