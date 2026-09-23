@@ -502,7 +502,7 @@ async function generateRecap(
   const withDirective = framed + languageDirective(samples)
   const messages = [createUserMessage({
     content: [{ type: 'text', text: withDirective }],
-    source: { kind: 'plugin', plugin: 'dsh-session-recap' },
+    source: { kind: 'plugin:dsh-session-recap' },
   })]
   const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
   if (first !== undefined) return first
