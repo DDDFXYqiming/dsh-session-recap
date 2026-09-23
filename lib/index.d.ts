@@ -17,6 +17,13 @@ import type { Message } from '@deepseek-ai/dsh-llm';
 import type { IncomingMessage } from 'node:http';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
+declare module '@deepseek-ai/dsh-llm' {
+    interface MessageSourceMap {
+        'plugin:dsh-session-recap': {
+            kind: 'plugin:dsh-session-recap';
+        };
+    }
+}
 export declare const name = "@dsh-external/dsh-session-recap";
 /** `llm` generates recaps; `sessionProjections` supplies current durable turn state. */
 export declare const inject: string[];

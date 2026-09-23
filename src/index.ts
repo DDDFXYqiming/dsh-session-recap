@@ -27,6 +27,15 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import z from '@deepseek-ai/schemastery'
 import type { RecapProjection, RecapResponse } from './types.js'
 
+// V4 (DSH 0.1.7) message sources are producer-owned: declare this plugin's own
+// `kind` through the SDK's merge-extensible MessageSourceMap instead of the retired
+// shared `{ kind: 'plugin', plugin: <name> }` wrapper.
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'plugin:dsh-session-recap': { kind: 'plugin:dsh-session-recap' }
+  }
+}
+
 export const name = '@dsh-external/dsh-session-recap'
 /** `llm` generates recaps; `sessionProjections` supplies current durable turn state. */
 export const inject = ['llm', 'sessionProjections']
