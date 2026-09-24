@@ -58,39 +58,39 @@ export interface Config {
     /** Optional stop sequences passed to the recap model. */
     stopSequences: string[];
 }
-export declare const Config: z<Schemastery.ObjectS<NoInfer<{
-    enabled: z<boolean, boolean, "defined">;
-    hostCommand: z<boolean, boolean, "defined">;
-    idleMs: z<number, number, "defined">;
-    minTurns: z<number, number, "defined">;
-    recentMessages: z<number, number, "defined">;
-    maxChars: z<number, number, "defined">;
-    maxInputChars: z<number, number, "defined">;
-    maxOutputTokens: z<number, number, "defined">;
-    timeoutMs: z<number, number, "defined">;
-    manualRequestTimeoutMs: z<number, number, "defined">;
-    provider: z<string, string, "defined">;
-    model: z<string, string, "defined">;
-    reasoningEffort: z<string, string, "defined">;
-    temperature: z<number, number, "plain">;
-    stopSequences: z<string[], string[], "defined">;
-}>>, Schemastery.ObjectT<NoInfer<{
-    enabled: z<boolean, boolean, "defined">;
-    hostCommand: z<boolean, boolean, "defined">;
-    idleMs: z<number, number, "defined">;
-    minTurns: z<number, number, "defined">;
-    recentMessages: z<number, number, "defined">;
-    maxChars: z<number, number, "defined">;
-    maxInputChars: z<number, number, "defined">;
-    maxOutputTokens: z<number, number, "defined">;
-    timeoutMs: z<number, number, "defined">;
-    manualRequestTimeoutMs: z<number, number, "defined">;
-    provider: z<string, string, "defined">;
-    model: z<string, string, "defined">;
-    reasoningEffort: z<string, string, "defined">;
-    temperature: z<number, number, "plain">;
-    stopSequences: z<string[], string[], "defined">;
-}>>, "plain">;
+export declare const Config: z<Schemastery.ObjectS<{
+    enabled: z<boolean, boolean>;
+    hostCommand: z<boolean, boolean>;
+    idleMs: z<number, number>;
+    minTurns: z<number, number>;
+    recentMessages: z<number, number>;
+    maxChars: z<number, number>;
+    maxInputChars: z<number, number>;
+    maxOutputTokens: z<number, number>;
+    timeoutMs: z<number, number>;
+    manualRequestTimeoutMs: z<number, number>;
+    provider: z<string, string>;
+    model: z<string, string>;
+    reasoningEffort: z<string, string>;
+    temperature: z<number, number>;
+    stopSequences: z<string[], string[]>;
+}>, Schemastery.ObjectT<{
+    enabled: z<boolean, boolean>;
+    hostCommand: z<boolean, boolean>;
+    idleMs: z<number, number>;
+    minTurns: z<number, number>;
+    recentMessages: z<number, number>;
+    maxChars: z<number, number>;
+    maxInputChars: z<number, number>;
+    maxOutputTokens: z<number, number>;
+    timeoutMs: z<number, number>;
+    manualRequestTimeoutMs: z<number, number>;
+    provider: z<string, string>;
+    model: z<string, string>;
+    reasoningEffort: z<string, string>;
+    temperature: z<number, number>;
+    stopSequences: z<string[], string[]>;
+}>>;
 type AppContext = Context & {
     llm: LlmService;
 };
@@ -129,6 +129,12 @@ declare function completeSentences(text: string): string | undefined;
  * payloads strip them, which once silently broke this module's tests.)
  */
 declare function stripThink(text: string): string;
+/**
+ * 回顾卡片按纯文本渲染，模型偷带出来的 Markdown（**、##、反引号、[x](y) 等）会原样
+ * 泄露成样式噪声。提示词禁不干净时在这里兜底：成对强调/删除线/代码/链接解包还原纯文本。
+ * 下划线一律不动，保住 __init__.py、task_pdyx_20260922 这类标识符。
+ */
+declare function stripMarkdown(text: string): string;
 declare function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string;
 declare function framedTranscriptHasContent(framed: string): boolean;
 /** @internal Pure framing helpers, exported only for `test/self-check.mjs`. */
@@ -157,6 +163,7 @@ export declare const internals: {
     contentText: typeof contentText;
     shortenText: typeof shortenText;
     stripThink: typeof stripThink;
+    stripMarkdown: typeof stripMarkdown;
     trimToSentence: typeof trimToSentence;
     completeSentences: typeof completeSentences;
     frameTranscript: typeof frameTranscript;
@@ -184,8 +191,8 @@ export declare const internals: {
     systemPrompt: typeof systemPrompt;
     languageDirective: typeof languageDirective;
 };
-/** Bounded away-summary instruction sent to the auxiliary model. */
-declare function systemPrompt(): string;
+/** 发给辅助模型的有界回顾指令；maxChars 同时是提示词里声明的硬预算。 */
+declare function systemPrompt(maxChars?: number): string;
 declare function allowedLoopbackRequest(req: IncomingMessage, requireOrigin: boolean): boolean;
 declare function updateClientPresence(clients: Map<string, ClientPresence>, clientId: string, sequence: number, active: boolean, now: number): boolean;
 declare function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean;

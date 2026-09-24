@@ -66,7 +66,7 @@ The bundle supplies the default entry. To override it, use this bare entry in th
     idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
     minTurns: 3          # minimum completed turns for automatic recaps
     recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
-    maxChars: 1200       # recap text limit
+    maxChars: 400        # recap text limit (also the model's hard budget; output is plain text, never Markdown)
     maxInputChars: 24000 # recap input limit in bytes
     maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000

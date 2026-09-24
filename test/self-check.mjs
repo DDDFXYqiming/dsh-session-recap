@@ -9,6 +9,7 @@ const {
   systemPrompt,
   languageDirective,
   stripThink,
+  stripMarkdown,
   trimToSentence,
   completeSentences,
   updateClientPresence,
@@ -83,12 +84,29 @@ check('transcript stays valid JSON within the UTF-8 byte bound', () => {
 })
 
 check('prompt leads with the current task and names tool noise', () => {
-  const prompt = systemPrompt()
+  const prompt = systemPrompt(400)
   assert.match(prompt, /Lead with the current task/)
   assert.match(prompt, /as noise, not intent/)
   assert.match(prompt, /language the user writes their own sentences in/)
   assert.match(prompt, /pasted logs, code, and quoted material/)
   assert.ok(!prompt.includes('overall goal'))
+})
+
+check('prompt bans markdown and states the hard character budget', () => {
+  const prompt = systemPrompt(400)
+  assert.match(prompt, /PLAIN TEXT ONLY/)
+  assert.match(prompt, /never write markdown/)
+  assert.match(prompt, /400 characters/)
+  assert.match(prompt, /no bullet points/)
+  assert.match(prompt, /no numbered lists/)
+  assert.match(prompt, /No preamble/)
+  assert.match(prompt, /single most important/)
+})
+
+check('maxChars default tightened to 400 and filled by Config', () => {
+  assert.equal(Config.dict.maxChars.meta.default, 400)
+  assert.equal(Config({}).maxChars, 400)
+  assert.match(systemPrompt(), /400 characters/)
 })
 
 check('recentMessages default widened to 80', () => {
@@ -201,6 +219,17 @@ check('stripThink removes inline think/thinking/thought blocks (old model servic
   assert.equal(stripThink(T + 'x' + TE + 'mid' + T + 'y' + TE), 'mid')
   assert.equal(stripThink('answer before' + T + 'trailing unclosed tail'), 'answer before')
   assert.equal(stripThink('plain text stays'), 'plain text stays')
+})
+
+check('stripMarkdown unwraps leaked markdown but keeps identifiers intact', () => {
+  assert.equal(stripMarkdown('**现象**：打标极慢 ## 一、结论'), '现象：打标极慢 一、结论')
+  assert.equal(stripMarkdown('见 [取接口文案](./x.md) 与 `code_path`'), '见 取接口文案 与 code_path')
+  assert.equal(stripMarkdown('1. **定位**：不是上下文不够'), '定位：不是上下文不够')
+  assert.equal(stripMarkdown('耗时 3-4 秒，task_pdyx_20260922 与 __init__.py 保持原样'), '耗时 3-4 秒，task_pdyx_20260922 与 __init__.py 保持原样')
+  assert.equal(stripMarkdown('*斜体* 与 ~~删除~~'), '斜体 与 删除')
+  assert.equal(stripMarkdown('纯文本不变化。'), '纯文本不变化。')
+  assert.equal(stripMarkdown('结论：## 一、根因 3.修复：去透传'), '结论：一、根因 修复：去透传')
+  assert.equal(stripMarkdown('一致性 98.9-99.4%，耗时 1.5 秒，见 #456 与 C# 语言'), '一致性 98.9-99.4%，耗时 1.5 秒，见 #456 与 C# 语言')
 })
 
 check('transcript entries never carry inline think blocks into the recap input', () => {

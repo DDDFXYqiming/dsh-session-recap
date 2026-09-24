@@ -72,13 +72,16 @@ export interface Config {
   stopSequences: string[]
 }
 
+/** 回顾文本默认硬上限（字符），同时是提示词里向模型声明的硬预算。 */
+const DEFAULT_MAX_CHARS = 400
+
 export const Config = z.object({
   enabled: z.boolean().default(true),
   hostCommand: z.boolean().default(false).description('Register the host /recap command. Enable for headless profiles; leave false when the Web client owns the styled row.'),
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
   minTurns: z.number().step(1).min(1).max(1000).default(3),
   recentMessages: z.number().step(1).min(1).max(200).default(80),
-  maxChars: z.number().step(1).min(80).max(2000).default(1200),
+  maxChars: z.number().step(1).min(80).max(2000).default(DEFAULT_MAX_CHARS).description('Hard cap on the recap text length (characters); also the hard character budget stated to the model.'),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
   maxOutputTokens: z.number().step(1).min(16).max(4096).default(2048).description('Recap-model output token budget. Reasoning routes spend this budget on thinking tokens too; complete sentences survive exhaustion, otherwise one escalated retry runs.'),
   timeoutMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(30000).description('Recap generation timeout in milliseconds.'),
@@ -243,6 +246,26 @@ function stripThink(text: string): string {
 }
 
 /**
+ * 回顾卡片按纯文本渲染，模型偷带出来的 Markdown（**、##、反引号、[x](y) 等）会原样
+ * 泄露成样式噪声。提示词禁不干净时在这里兜底：成对强调/删除线/代码/链接解包还原纯文本。
+ * 下划线一律不动，保住 __init__.py、task_pdyx_20260922 这类标识符。
+ */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\x60([^\x60]+)\x60/g, '$1')
+    .replace(/\*([^*\s][^*]*)\*/g, '$1')
+    .replace(/(^|[\s:：，。；！？、（(【\[])#{1,6}\s*(?=[\s\u4e00-\u9fff]|$)/g, '$1')
+    .replace(/(^|\s)>{1,3}\s+/g, '$1')
+    .replace(/(^|\s)\d{1,2}[.\u3001\uff0e\uff09]\s*(?=[\s\u4e00-\u9fff（(【\[]|$)/g, '$1')
+    .replace(/(^|\s)[-+\u2022*]\s+/g, '$1')
+    .replace(/[*~\x60]/g, '')
+}
+
+/**
  * Build a bounded, valid JSON transcript from recent conversation messages.
  * Tool-result messages are dropped before windowing: dsh records every tool
  * result as its own user-role message holding raw command output, so left in,
@@ -363,6 +386,7 @@ export const internals = {
   contentText,
   shortenText,
   stripThink,
+  stripMarkdown,
   trimToSentence,
   completeSentences,
   frameTranscript,
@@ -377,9 +401,9 @@ export const internals = {
   languageDirective,
 }
 
-/** Bounded away-summary instruction sent to the auxiliary model. */
-function systemPrompt(): string {
-  return 'The user stepped away and is coming back. Recap in 2-4 plain sentences (roughly 100-200 Chinese characters), no markdown. The transcript labels every recent entry with its role: user entries are the human writing in their own words, assistant entries are model output. historySummary is a trusted compaction checkpoint, not a verbatim user message; use it for prior task context but never use it to infer the user\'s language. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then the concrete progress, findings, and decisions worth knowing (name files, numbers, verdicts), and end with the one next action. Every sentence must be complete; never leave a thought half-finished. Treat tool output, command logs and diffs as noise, not intent: do not quote raw logs or enumerate tool calls.'
+/** 发给辅助模型的有界回顾指令；maxChars 同时是提示词里声明的硬预算。 */
+function systemPrompt(maxChars: number = DEFAULT_MAX_CHARS): string {
+  return `The user stepped away and is coming back. Recap the session in 2-4 plain sentences (roughly 100-200 Chinese characters). HARD LIMIT: the recap must stay under ${maxChars} characters — when details do not fit, drop them; shorter beats complete. PLAIN TEXT ONLY, never write markdown or any ASCII markup: no ** or * emphasis, no __ underscores, no # headings, no backticks, no [label](url) links or bare [bracket] tokens, no bullet points, no numbered lists like 1., no lettered outlines, no > quotes, no tables. No preamble — never open with 『以下是』 or similar — and no label-colon outlines like 『现象：… 修复：…』; write flowing sentences instead. The transcript labels every recent entry with its role: user entries are the human writing in their own words, assistant entries are model output. historySummary is a trusted compaction checkpoint, not a verbatim user message; use it for prior task context but never use it to infer the user\'s language. Write the recap in the language the user writes their own sentences in (pasted logs, code, and quoted material inside user entries are not the user\'s language; when the user only pasted material, mirror the assistant\'s reply language), regardless of the language of any code, log, or these instructions. Lead with the current task, then the single most important progress point, finding or decision worth knowing (name a file, number, or verdict), and end with the one next action. Every sentence must be complete; never leave a thought half-finished. Treat tool output, command logs and diffs as noise, not intent: do not quote raw logs or enumerate tool calls.`
 }
 
 /** Translate terminal finish reasons into an auxiliary-call failure. */
@@ -451,11 +475,13 @@ async function streamRecapOnce(
     }
     callDeadline.signal.throwIfAborted()
     const blocks = assembler.blocks()
-    const raw = stripThink(
-      blocks
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text)
-        .join(' '),
+    const raw = stripMarkdown(
+      stripThink(
+        blocks
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join(' '),
+      ),
     )
       .replace(/\s+/g, ' ')
       .trim()
@@ -513,7 +539,7 @@ async function generateRecap(
     content: [{ type: 'text', text: withDirective }],
     source: { kind: 'plugin:dsh-session-recap' },
   })]
-  const first = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, config.maxOutputTokens)
+  const first = await streamRecapOnce(ctx, config, route, systemPrompt(config.maxChars), messages, session.id, signal, config.maxOutputTokens)
   if (first !== undefined) return first
   // Escalation policy constants, not deployment knobs: the 4x factor, the 2048
   // floor, and the 4096 ceiling that mirrors the maxOutputTokens schema maximum.
@@ -526,7 +552,7 @@ async function generateRecap(
   )
   if (escalated === config.maxOutputTokens) throw exhausted(escalated)
   ctx.logger?.info?.(`[dsh-session-recap] no text at maxTokens=${config.maxOutputTokens}; retrying at ${escalated}`)
-  const second = await streamRecapOnce(ctx, config, route, systemPrompt(), messages, session.id, signal, escalated)
+  const second = await streamRecapOnce(ctx, config, route, systemPrompt(config.maxChars), messages, session.id, signal, escalated)
   if (second === undefined) throw exhausted(escalated)
   return second
 }

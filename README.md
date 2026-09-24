@@ -66,7 +66,7 @@ bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordi
     idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
     minTurns: 3          # 自动回顾所需的最少完成轮数
     recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
-    maxChars: 1200       # 回顾文本上限
+    maxChars: 400        # 回顾文本上限（同时是告知模型的硬预算，输出为纯文本、无 Markdown）
     maxInputChars: 24000 # 回顾输入上限（字节）
     maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
     timeoutMs: 30000
