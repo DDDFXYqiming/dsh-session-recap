@@ -25,29 +25,31 @@ jobs:
         node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@v7
-      # 刻意不开 setup-node 的 npm 缓存：本仓库不跟踪 lockfile
-      # （package-lock.json 在 .gitignore 里），setup-node 找不到缓存依赖文件会直接报错。
-      # 缓存只影响耗时，不影响测试结论，因此宁可不加。
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       # 依赖全部来自公共 npm 上的精确版本（devDependencies / overrides 钉在
       # 0.1.6-alpha.1），不需要任何私有 registry、API key 或凭证。
-      # npm install 会自动执行 prepare 钩子 = scripts/build.mjs（tsc 编译宿主 + 复制客户端）。
-      # 注意：仓库不跟踪 lockfile，所以这里用 npm install 而不是 npm ci。
+      # pnpm install 会自动执行 prepare 钩子 = scripts/build.mjs（tsc 编译宿主 + 复制客户端）。
+      # 仓库跟踪 pnpm-lock.yaml，CI 与本地开发走同一条安装链路：
+      # --frozen-lockfile 把构建期依赖（schemastery / zod / typescript 等）钉在
+      # lock 里的版本，lib/ 构建产物可复现，类型声明不会因依赖浮动而漂移。
       - name: Install
-        run: npm install
+        run: pnpm install --frozen-lockfile
       # 这一步完全离线：self-check 是纯函数断言；node --test 的用例使用内存里的
       # 假 ctx / 假 LLM / 全局 fetch stub，不读取任何 API key、不调用真实模型、
       # 也不访问任何外部数据源。因此可以安全地放进 push/PR 流水线。
       - name: Test (offline)
-        run: npm test
+        run: pnpm test
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
       # lib/ 是提交进仓库的构建产物；重新构建后必须与提交内容一致，
       # 防止改了 src/ 却忘记提交编译产物。
       - name: Verify committed lib/ matches a fresh build
         run: |
-          npm run build
+          pnpm run build
           git status --porcelain -- lib
           test -z "$(git status --porcelain -- lib)"
