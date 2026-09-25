@@ -1,115 +1,115 @@
-简体中文 | [English](README.en.md)
+[简体中文](README.zh.md) | English
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
+**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-当前插件版本为 **0.1.7**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+The plugin is currently at **0.1.7**, with a peer compatibility range of DSH `>=0.1.6-alpha.1 <0.2.0-0`. Builds run through Node on Windows and Linux.
 
-## 为什么需要它
+## Why this plugin exists
 
-人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。这个插件让用户回来时先读一段短回顾，再决定从哪里继续。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
+People step away from the screen for all sorts of reasons, and the session is still sitting there when they return. The thread of thought is gone, though, and scrolling back through the message history takes a while. After a spell away you read a short recap first, then decide where to pick up. This plugin brings that behavior to the DSH Web. A separate auxiliary LLM request produces the recap, and the finished text is never appended to the conversation message history.
 
-## 能力
+## Capabilities
 
-- 离开 Web 页面或切换会话后，满足 `idleMs` 和 `minTurns` 才会自动生成；前台停留不会因单纯空闲调用模型。
-- `/recap` 可随时手动触发。Web 菜单保留官方图标、中英文标题和说明；无浏览器 profile 可开启 `hostCommand`，直接得到正文。
-- 回顾显示在输入框上方，可关闭；新消息或切换会话后会隐藏，每个会话只保留当前回顾。
-- 输入会过滤工具输出，保留压缩摘要，并以最近一条真实用户消息定位任务。回顾跟随用户语言，旧模型内联的 think 标签也会被清理。
-- 多标签页按客户端聚合 presence，带心跳和租约；会话发生变化时，旧的生成结果会被丢弃。
-- 结果只写入插件 sidecar，不修改 DSH 会话日志。provider、model、输出长度和超时可配置。
+- Generates automatically after you leave the Web page or switch sessions, once `idleMs` and `minTurns` are satisfied; focused-window idleness never spends an LLM call.
+- Runs `/recap` on demand. The Web menu keeps the official icon, English and Chinese labels, and description; a headless profile can enable `hostCommand` to receive plain text.
+- Shows the recap above the composer and lets you dismiss it. A new message or session switch hides it, and each session keeps only its current recap.
+- Drops tool output, keeps the compaction summary, and anchors the task on the newest real user message. The recap follows the user's language, and inline think tags from older model services are removed.
+- Aggregates presence across page clients with heartbeats and leases, and discards a result when the session changes while it is being generated.
+- Stores results in the plugin sidecar without changing the DSH session log. Provider, model, output size, and timeout are configurable.
 
-## 工作方式
+## How it works
 
-1. Web client 报告页面和会话的 `active` / `away` 状态。只有所有有效页面都离开后，Host 才会把会话视为 away。
-2. Host 检查 `idleMs`、`minTurns` 和最新完成轮次，构造有界输入后调用辅助模型。
-3. 会话开始新轮次、前进或销毁时，旧结果不会提交。有效结果写入 sidecar，再由 Web 卡片或 `CommandResult.text` 展示。
+1. The Web client reports `active` / `away` for each page and session. The Host marks a session away only after all valid pages have left.
+2. The Host checks `idleMs`, `minTurns`, and the latest completed turn, then sends a bounded transcript to the auxiliary model.
+3. A new turn, session advance, or disposal invalidates the old result. Valid output goes to the sidecar and is shown in the Web card or through `CommandResult.text`.
 
-## 安装
+## Installation
 
 ```bash
-# GitHub 安装（推荐）
+# GitHub installation (recommended)
 dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-从本地源码安装的方式如下。
+To install from a local checkout, run the following.
 
 ```bash
 git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
 cd dsh-session-recap
 npm install && npm run build
-dsh plugin --profile web add <本目录绝对路径>
+dsh plugin --profile web add <absolute-path-to-checkout>
 ```
 
-GitHub 安装会触发 `prepare` 脚本重新构建 `lib/`。pnpm ≥10 首次 `add` 会拒绝运行该构建脚本。把 pnpm 打印的包键复制进 profile 的 `pnpm-workspace.yaml` 后重新 `add` 即可。下面是一份示例。
+The GitHub route triggers the `prepare` script, which rebuilds `lib/` from source. On the first `add`, pnpm >= 10 refuses to run build scripts of git dependencies: copy the exact package key pnpm prints into the profile's `pnpm-workspace.yaml`, then re-run `add`:
 
 ```yaml
 allowBuilds:
   '@dsh-external/dsh-session-recap': true
 ```
 
-请把这项授权视为「允许该包代码在安装时于你的机器上执行」；担心后续推送改变构建内容时，锁定 commit（`github:DDDFXYqiming/dsh-session-recap#<sha>`）。
+Treat this approval as "let this package run code on your machine at install time". Pin a commit (`github:DDDFXYqiming/dsh-session-recap#<sha>`) if you want later pushes to stop changing what gets built.
 
-插件自带 `cordis.patch.yml`，安装后会自动加入 `dsh-session-recap` bundle 条目。首次安装后重启 Web profile，再刷新页面。
+The package includes `cordis.patch.yml`, which contributes the `dsh-session-recap` bundle entry automatically. Restart the Web profile after the first installation, then refresh the page.
 
-从源码构建、测试与上游结构核对的完整命令见 [开发与验证](docs/development.md)。
+See [development](docs/development.md) for the full build, test and upstream-structure commands.
 
-## 配置
+## Configuration
 
-bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目。
+The bundle supplies the default entry. To override it, use this bare entry in the profile's `cordis.patch.yml`.
 
 ```yaml
 - id: dsh-session-recap
   config:
-    enabled: true        # 只控制自动回顾；/recap 始终可用
-    hostCommand: false   # Web 保持 false；无浏览器 profile 可设为 true
-    idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
-    minTurns: 3          # 自动回顾所需的最少完成轮数
-    recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
-    maxChars: 400        # 回顾文本上限（同时是告知模型的硬预算，输出为纯文本、无 Markdown）
-    maxInputChars: 24000 # 回顾输入上限（字节）
-    maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
+    enabled: true        # automatic recaps only; /recap remains available
+    hostCommand: false   # keep false for Web; headless profiles may set true
+    idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
+    minTurns: 3          # minimum completed turns for automatic recaps
+    recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
+    maxChars: 400        # recap text limit (also the model's hard budget; output is plain text, never Markdown)
+    maxInputChars: 24000 # recap input limit in bytes
+    maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
     timeoutMs: 30000
-    manualRequestTimeoutMs: 70000 # 浏览器手动 /recap 等待结果的超时（毫秒）；生成最长约 2×timeoutMs，放弃等待不影响服务端继续生成
-    provider: ''         # 留空：复用会话最近实际使用的 provider
-    model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
-    reasoningEffort: ''  # 留空：插件不传思考等级；也可填写目标适配器支持的 id
-    # temperature: 0.2   # 可选；省略时使用目标模型/适配器默认值
-    stopSequences: []    # 可选停止词列表
+    manualRequestTimeoutMs: 70000 # browser deadline (ms) for waiting on a manual /recap; generation can take up to 2x timeoutMs, and giving up never cancels server-side generation
+    provider: ''         # empty: reuse the session's latest effective provider
+    model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
+    reasoningEffort: ''  # empty: the plugin sends no effort; otherwise use an id supported by the target adapter
+    # temperature: 0.2   # optional; omit to use the target model/adapter default
+    stopSequences: []    # optional stop-sequence list
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算。预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. When a reasoning model exhausts `maxOutputTokens`, the plugin immediately delivers any complete sentences already produced; it retries once at 4x budget (capped at 4096) only when no complete sentence exists. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
 
-`hostCommand` 决定 `/recap` 的唯一所有者。Web profile 保持默认值，由客户端贡献完整菜单样式；只有不加载 Web 客户端的 profile 才设为 `true`，由宿主命令在终端或其他命令面直接返回正文。同一 profile 不要同时启用两种所有者。
+`hostCommand` selects the sole owner of `/recap`. Keep the default in a Web profile so the client contribution can render the complete menu row. Set it to `true` only in a profile that does not load the Web client; the host command then returns recap text through the terminal or another command surface. Do not enable both owners in one profile.
 
-## 存储布局
+## Storage layout
 
 ```text
 <home>/.dsh/plugin-data/dsh-session-recap/
 └── <encoded-session-id>.json
 ```
 
-sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。DSH 的 session log 是 append-only 的，插件不改它的事件词汇，也不往里写自定义事件。旧回顾会被清理。会话前进后，每个会话留下的始终是当前那一份回顾。
+The sidecar stores the current recap text, generation time, and completed-turn anchor. The DSH session log is append-only, and the plugin neither extends its event vocabulary nor writes plugin-defined events into it. Stale recaps are removed after the session advances, so each session keeps only its current recap on disk.
 
-## 安全边界
+## Security boundary
 
-`/api/dsh-session-recap` route 仅接受 loopback 连接：校验远端地址、`Host` 头与 `Origin`。`Host` 用锚定正则匹配，阻断 DNS rebinding；跨端口、跨协议与伪造 Host 的请求一律拒绝。写入面 POST（presence 上报与手动生成）强制要求精确同源的浏览器 `Origin`，非法来源不会触发生成。读取面 GET 不要求 `Origin`：任何能访问该本机端口、且能通过地址与 Host 校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述 loopback 与同源校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
+The `/api/dsh-session-recap` route accepts loopback connections only: it validates the remote address, the `Host` header, and the `Origin`. `Host` is matched by an anchored regex, blocking DNS rebinding; cross-port, cross-scheme, and forged-`Host` requests are rejected. The write side (POST presence reports and manual generation) requires an exact same-origin browser `Origin`, and an invalid origin never starts generation. The read side (GET) does not require an `Origin`: any local process that reaches the port and passes the address and `Host` checks can read a session's recap text, which is equivalent to reading the plugin sidecar file directly and adds no further exposure. The route is exempt from host authentication by design; its trust rests entirely on the loopback and origin checks above. It never touches credentials and never returns raw session logs; responses carry no CORS headers and set `Cache-Control: no-store` plus `X-Content-Type-Options: nosniff`.
 
-## 兼容性
+## Compatibility
 
-| 项目 | 版本或范围 |
+| Item | Version or scope |
 | --- | --- |
-| dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0`（peerDependencies）；构建与测试钉在 `0.1.6-alpha.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），`0.1.6-alpha.2` 已通过运行验证 |
-| Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
-| 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
+| dsh-session-recap | `0.1.7` (`package.json`) |
+| DeepSeek Harness packages | Compatible range `>=0.1.6-alpha.1 <0.2.0-0` (peerDependencies); builds and tests pin `0.1.6-alpha.1` (devDependencies/overrides, for reproducible builds and git-hosted install resolution), verified running on `0.1.6-alpha.2` hosts |
+| Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
+| Surface | Any DSH profile with LLM and session-projection services. The host command additionally needs commands; the Web card needs locale, conversation, slots, and Web-server services |
 
-## 相关
+## Related
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)，同一行为在 Pi Coding Agent TUI 上的实现
+- [pi-recap](https://github.com/DDDFXYqiming/pi-recap): the same behavior for the Pi Coding Agent TUI
 - [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
 
-## 授权
+## License
 
 MIT
