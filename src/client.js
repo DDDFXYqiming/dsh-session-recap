@@ -212,7 +212,24 @@ window.__ModuleLoader__.load({
             }
             return String(visibleCount) + ':' + lastVisible
           })
-      var activityKey = sessionActivity + ':' + chatActivity
+      // 新版时间线会在刷新后分批恢复；只有晚于回顾锚点的消息才属于新活动。
+      var latestChatSeq = useConversation
+        ? useConversation(function (conversation) {
+            var chat = conversation.views.get('chat')
+            var order = chat ? chat.order : []
+            var latest = -1
+            var unanchored = false
+            for (var index = 0; index < order.length; index += 1) {
+              var node = chat.nodes.get(order[index])
+              if (!node || node.kind === 'command') continue
+              if (!Number.isFinite(node.anchorSeq)) { unanchored = true; continue }
+              // anchorSeq 的小数部分只用于尾部控件排序，不代表新增持久事件。
+              latest = Math.max(latest, Math.floor(node.anchorSeq))
+            }
+            return latest < 0 && unanchored ? null : latest
+          })
+        : null
+      var activityKey = sessionActivity + ':' + chatActivity + ':' + String(latestChatSeq)
       var lastActivity = react.useRef(activityKey)
       var noticeState = react.useState(0)
       var setNoticeTick = noticeState[1]
@@ -287,11 +304,12 @@ window.__ModuleLoader__.load({
       react.useEffect(function () {
         if (lastActivity.current === activityKey) return
         lastActivity.current = activityKey
-        if (text !== null && currentKey !== null && shownKey.current === currentKey && !wasDismissed(sessionId, turnSeq, at)) {
+        var hasNewActivity = latestChatSeq === null || latestChatSeq > turnSeq
+        if (hasNewActivity && text !== null && currentKey !== null && shownKey.current === currentKey && !wasDismissed(sessionId, turnSeq, at)) {
           rememberDismissed(sessionId, turnSeq, at)
           setDismissedKey(currentKey)
         }
-      }, [activityKey, text, currentKey, sessionId, turnSeq, at])
+      }, [activityKey, latestChatSeq, text, currentKey, sessionId, turnSeq, at])
 
       react.useEffect(function () {
         if (typeof document === 'undefined' || sessionKey === '') return undefined

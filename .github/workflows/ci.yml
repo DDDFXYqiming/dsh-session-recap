@@ -32,7 +32,7 @@ jobs:
         with:
           version: 10
       # 依赖全部来自公共 npm 上的精确版本（devDependencies / overrides 钉在
-      # 0.1.6-alpha.1），不需要任何私有 registry、API key 或凭证。
+      # 0.2.0-rc.1），不需要任何私有 registry、API key 或凭证。
       # pnpm install 会自动执行 prepare 钩子 = scripts/build.mjs（tsc 编译宿主 + 复制客户端）。
       # 仓库跟踪 pnpm-lock.yaml，CI 与本地开发走同一条安装链路：
       # --frozen-lockfile 把构建期依赖（schemastery / zod / typescript 等）钉在

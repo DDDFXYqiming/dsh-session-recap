@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前插件版本为 **0.1.7**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前插件版本为 **0.1.10**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -95,12 +95,18 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 `/api/dsh-session-recap` route 仅接受 loopback 连接：校验远端地址、`Host` 头与 `Origin`。`Host` 用锚定正则匹配，阻断 DNS rebinding；跨端口、跨协议与伪造 Host 的请求一律拒绝。写入面 POST（presence 上报与手动生成）强制要求精确同源的浏览器 `Origin`，非法来源不会触发生成。读取面 GET 不要求 `Origin`：任何能访问该本机端口、且能通过地址与 Host 校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述 loopback 与同源校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
 
+## 0.1.10 更新
+
+- 支持 DSH 0.2.0-rc.1，构建依赖与持续集成同步升级。
+- 修复刷新页面时历史消息恢复导致回顾卡片自动消失的问题；只在晚于回顾锚点的新消息出现时自动收起。
+- 保留手动回顾、离开后自动回顾、关闭状态记忆和新回顾重新显示的行为，并加入 React 生命周期回归测试。
+
 ## 兼容性
 
 | 项目 | 版本或范围 |
 | --- | --- |
 | dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0`（peerDependencies）；构建与测试钉在 `0.1.6-alpha.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），`0.1.6-alpha.2` 已通过运行验证 |
+| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1`（peerDependencies）；构建与测试钉在 `0.2.0-rc.1`（devDependencies/overrides，保证可复现构建与 git 安装解析），保留 0.1.x 的兼容声明，新增 0.2.0-rc.1 的构建与回归验证 |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
 
