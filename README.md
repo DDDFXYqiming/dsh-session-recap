@@ -4,7 +4,7 @@
 
 **A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
 
-The plugin is currently at **0.1.10**, with a peer compatibility range of DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1`. Builds run through Node on Windows and Linux.
+The plugin is currently at **0.1.10**, with a peer compatibility range of DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`. Builds run through Node on Windows and Linux.
 
 ## Why this plugin exists
 
@@ -100,7 +100,7 @@ The `/api/dsh-session-recap` route accepts loopback connections only: it validat
 | Item | Version or scope |
 | --- | --- |
 | dsh-session-recap | `0.1.7` (`package.json`) |
-| DeepSeek Harness packages | Compatible range `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1` (peerDependencies); builds and tests pin `0.2.0-rc.1` (devDependencies/overrides, for reproducible builds and git-hosted install resolution), retains the 0.1.x compatibility range and adds 0.2.0-rc.1 build and regression coverage |
+| DeepSeek Harness packages | Compatible range `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2` (peerDependencies); builds and tests pin `0.2.0-rc.2` (devDependencies/overrides, for reproducible builds and git-hosted install resolution), retains the 0.1.x compatibility range and adds 0.2.0-rc.2 build and regression coverage |
 | Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
 | Surface | Any DSH profile with LLM and session-projection services. The host command additionally needs commands; the Web card needs locale, conversation, slots, and Web-server services |
 
