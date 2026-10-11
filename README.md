@@ -1,115 +1,82 @@
-[简体中文](README.zh.md) | English
+简体中文 | [English](README.en.md)
 
 # @dsh-external/dsh-session-recap
 
-**A session-recap plugin for DeepSeek Harness (DSH).** Switch to another session or leave the Web window unfocused, and the plugin generates a short recap in the background. When you come back, a card summarizes the session's current task, completed progress, and the suggested next action.
+**面向 DeepSeek Harness (DSH) Web 的长程任务会话智能回顾扩展**。
 
-The plugin is currently at **0.1.10**, with a peer compatibility range of DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`. Builds run through Node on Windows and Linux.
+在复杂的工程对话中，开发者频繁在多个会话或外部窗口间来回切换。`dsh-session-recap` 在后台无缝追踪页面可见性与空闲状态，当用户离开或切换会话达到设定阈值时，自动调用辅助模型提炼出当前任务的核心目标、已落地的关键改动与明确的下一步动作；当重新切回时，输入框上方即时呈现结构化卡片，快速召回思路。
 
-## Why this plugin exists
+---
 
-People step away from the screen for all sorts of reasons, and the session is still sitting there when they return. The thread of thought is gone, though, and scrolling back through the message history takes a while. After a spell away you read a short recap first, then decide where to pick up. This plugin brings that behavior to the DSH Web. A separate auxiliary LLM request produces the recap, and the finished text is never appended to the conversation message history.
+## 核心特性
 
-## Capabilities
+* **多端会话感知（Presence Tracking）**：通过客户端心跳与租约机制，精准聚合追踪浏览器的 `active` 与 `away` 状态。只有在当前会话真正失焦且空闲满阈值（默认 3 分钟且至少 3 个完成轮次）时触发，杜绝无效开销。
+* **零侵入持久化（Sidecar Storage）**：回顾内容以独立 Sidecar 文件形式存储于 `~/.dsh/plugin-data/dsh-session-recap/`，严禁向 DSH 追加型会话事件日志中写入杂质数据，不占用主模型上下文 Token。
+* **动态语言与内容契约**：自动剔除沉余的工具日志与底层执行细节，以最近的真实用户指令为锚点，提取压缩摘要。严格遵循用户语言输出 2~4 句纯文本硬核结论，杜绝模板客套话。
+* **深厚安全边界**：内置专有 API 路由防护，严格校验 Loopback 本地回环、精确 Host 匹配与 Same-Origin 来源，杜绝 DNS Rebinding 与跨端口伪造风险。
+* **双模支持**：Web 界面通过优雅卡片呈现并支持一键隐藏；无界面配置下（Headless）支持通过 `/recap` 终端指令直接回传纯文本。
 
-- Generates automatically after you leave the Web page or switch sessions, once `idleMs` and `minTurns` are satisfied; focused-window idleness never spends an LLM call.
-- Runs `/recap` on demand. The Web menu keeps the official icon, English and Chinese labels, and description; a headless profile can enable `hostCommand` to receive plain text.
-- Shows the recap above the composer and lets you dismiss it. A new message or session switch hides it, and each session keeps only its current recap.
-- Drops tool output, keeps the compaction summary, and anchors the task on the newest real user message. The recap follows the user's language, and inline think tags from older model services are removed.
-- Aggregates presence across page clients with heartbeats and leases, and discards a result when the session changes while it is being generated.
-- Stores results in the plugin sidecar without changing the DSH session log. Provider, model, output size, and timeout are configurable.
+---
 
-## How it works
+## 架构与工作流程
 
-1. The Web client reports `active` / `away` for each page and session. The Host marks a session away only after all valid pages have left.
-2. The Host checks `idleMs`, `minTurns`, and the latest completed turn, then sends a bounded transcript to the auxiliary model.
-3. A new turn, session advance, or disposal invalidates the old result. Valid output goes to the sidecar and is shown in the Web card or through `CommandResult.text`.
+```
+[Web 窗口失焦 / 切换会话] ──> [Presence Lease 判定 Away]
+                                      │
+                                      ▼ (达到 idleMs + minTurns)
+[Sidecar 文件存储] <── [提取意图 / 过滤工具] <── [独立辅助模型提炼]
+         │
+         ▼
+[切回会话 ──> 输入框上方渲染结构化卡片]
+```
 
-## Installation
+---
+
+## 安装与快速上手
+
+### 通过 DSH 插件系统安装（推荐）
 
 ```bash
-# GitHub installation (recommended)
 dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-To install from a local checkout, run the following.
+### 本地源码安装
 
 ```bash
 git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
 cd dsh-session-recap
 npm install && npm run build
-dsh plugin --profile web add <absolute-path-to-checkout>
+dsh plugin --profile web add .
 ```
 
-The GitHub route triggers the `prepare` script, which rebuilds `lib/` from source. On the first `add`, pnpm >= 10 refuses to run build scripts of git dependencies: copy the exact package key pnpm prints into the profile's `pnpm-workspace.yaml`, then re-run `add`:
+*若使用 pnpm 10+ 遇到构建权限拦截，请在 Profile 对应的 `pnpm-workspace.yaml` 中将 `@dsh-external/dsh-session-recap` 加入 `allowBuilds: true`。*
 
-```yaml
-allowBuilds:
-  '@dsh-external/dsh-session-recap': true
-```
+安装后重启 Web Profile 并刷新浏览器即可生效。
 
-Treat this approval as "let this package run code on your machine at install time". Pin a commit (`github:DDDFXYqiming/dsh-session-recap#<sha>`) if you want later pushes to stop changing what gets built.
+---
 
-The package includes `cordis.patch.yml`, which contributes the `dsh-session-recap` bundle entry automatically. Restart the Web profile after the first installation, then refresh the page.
+## 配置指南
 
-See [development](docs/development.md) for the full build, test and upstream-structure commands.
-
-## Configuration
-
-The bundle supplies the default entry. To override it, use this bare entry in the profile's `cordis.patch.yml`.
+插件已内嵌开箱即用的默认规则。如需自定义，可在对应 Profile 的 `cordis.patch.yml` 中配置：
 
 ```yaml
 - id: dsh-session-recap
   config:
-    enabled: true        # automatic recaps only; /recap remains available
-    hostCommand: false   # keep false for Web; headless profiles may set true
-    idleMs: 180000       # minimum age of the latest completed turn, in milliseconds
-    minTurns: 3          # minimum completed turns for automatic recaps
-    recentMessages: 80   # recent conversation messages in the recap window (tool results excluded)
-    maxChars: 400        # recap text limit (also the model's hard budget; output is plain text, never Markdown)
-    maxInputChars: 24000 # recap input limit in bytes
-    maxOutputTokens: 2048 # recap-model output token budget (reasoning models spend it on thinking too)
-    timeoutMs: 30000
-    manualRequestTimeoutMs: 70000 # browser deadline (ms) for waiting on a manual /recap; generation can take up to 2x timeoutMs, and giving up never cancels server-side generation
-    provider: ''         # empty: reuse the session's latest effective provider
-    model: ''            # empty: reuse the session's latest effective model; set with provider for a fixed route
-    reasoningEffort: ''  # empty: the plugin sends no effort; otherwise use an id supported by the target adapter
-    # temperature: 0.2   # optional; omit to use the target model/adapter default
-    stopSequences: []    # optional stop-sequence list
+    enabled: true        # 是否开启自动回顾（关闭后仍支持手动 /recap）
+    hostCommand: false   # Web 模式请保持 false；纯终端 Headless 模式可设为 true
+    idleMs: 180000       # 触发前所需空闲时长（毫秒，默认 3 分钟）
+    minTurns: 3          # 触发所需完成的最小轮次数
+    recentMessages: 80   # 提取意图的最大最近对话条数
+    maxChars: 400        # 回顾正文字符上限（纯文本输出）
+    maxInputChars: 24000 # 输入上下文截取长度
+    maxOutputTokens: 2048 # 模型最大输出 Token 预算
+    timeoutMs: 30000     # 请求超时时限
+    provider: ''         # 为空时自动沿用当前会话的模型服务商
+    model: ''            # 为空时自动沿用当前会话的模型
 ```
 
-`provider` and `model` must be supplied together. Leaving both empty makes automatic recaps and `/recap` reuse the effective route from the session's latest `request/context`, so the recap follows whatever the session is actually using and needs no route of its own. By default the plugin neither inherits nor sends the session's `reasoningEffort`; the target adapter may still apply its own default. When a reasoning model exhausts `maxOutputTokens`, the plugin immediately delivers any complete sentences already produced; it retries once at 4x budget (capped at 4096) only when no complete sentence exists. These overrides, input/output bounds, and timeout apply to both automatic and manual recaps.
+---
 
-`hostCommand` selects the sole owner of `/recap`. Keep the default in a Web profile so the client contribution can render the complete menu row. Set it to `true` only in a profile that does not load the Web client; the host command then returns recap text through the terminal or another command surface. Do not enable both owners in one profile.
+## 许可证
 
-## Storage layout
-
-```text
-<home>/.dsh/plugin-data/dsh-session-recap/
-└── <encoded-session-id>.json
-```
-
-The sidecar stores the current recap text, generation time, and completed-turn anchor. The DSH session log is append-only, and the plugin neither extends its event vocabulary nor writes plugin-defined events into it. Stale recaps are removed after the session advances, so each session keeps only its current recap on disk.
-
-## Security boundary
-
-The `/api/dsh-session-recap` route accepts loopback connections only: it validates the remote address, the `Host` header, and the `Origin`. `Host` is matched by an anchored regex, blocking DNS rebinding; cross-port, cross-scheme, and forged-`Host` requests are rejected. The write side (POST presence reports and manual generation) requires an exact same-origin browser `Origin`, and an invalid origin never starts generation. The read side (GET) does not require an `Origin`: any local process that reaches the port and passes the address and `Host` checks can read a session's recap text, which is equivalent to reading the plugin sidecar file directly and adds no further exposure. The route is exempt from host authentication by design; its trust rests entirely on the loopback and origin checks above. It never touches credentials and never returns raw session logs; responses carry no CORS headers and set `Cache-Control: no-store` plus `X-Content-Type-Options: nosniff`.
-
-## Compatibility
-
-| Item | Version or scope |
-| --- | --- |
-| dsh-session-recap | `0.1.7` (`package.json`) |
-| DeepSeek Harness packages | Compatible range `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2` (peerDependencies); builds and tests pin `0.2.0-rc.2` (devDependencies/overrides, for reproducible builds and git-hosted install resolution), retains the 0.1.x compatibility range and adds 0.2.0-rc.2 build and regression coverage |
-| Node.js | `^22.19.0 \|\| >=24.0.0` (the current DSH runtime range) |
-| Surface | Any DSH profile with LLM and session-projection services. The host command additionally needs commands; the Web card needs locale, conversation, slots, and Web-server services |
-
-## Related
-
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [pi-recap](https://github.com/DDDFXYqiming/pi-recap): the same behavior for the Pi Coding Agent TUI
-- [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
-
-## License
-
-MIT
+本项目基于 [MIT License](LICENSE) 开源。
