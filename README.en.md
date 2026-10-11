@@ -20,14 +20,15 @@ When working across complex development workflows, engineers constantly multitas
 
 ## Architecture & Lifecycle
 
-```
-[Web Window Blur / Session Switch] ──> [Presence Lease Declares Away]
-                                                │
-                                                ▼ (Threshold: idleMs + minTurns)
-[Sidecar Storage] <── [Filter Logs / Extract Intent] <── [Auxiliary LLM Inference]
-        │
-        ▼
-[Return to Session ──> Render Context Card Above Composer]
+```mermaid
+flowchart TD
+    A["Web Window Blur / Session Switch"] --> B["Presence Lease Declares Away"]
+    B --> C{"Threshold Validation<br/>(Meets idleMs & minTurns)"}
+    C -- Met --> D["Extract Intent & Strip Verbose Tool Logs"]
+    D --> E["Query Auxiliary LLM for Compact Verdicts"]
+    E --> F["Persist Context to Sidecar Storage"]
+    F --> G["Return to Session ──> Render Context Card Above Composer"]
+    C -- Not Met --> H["Remain Silent (Zero Model Overhead)"]
 ```
 
 ---
