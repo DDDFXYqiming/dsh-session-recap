@@ -70,6 +70,8 @@ export interface Config {
   temperature?: number
   /** Optional stop sequences passed to the recap model. */
   stopSequences: string[]
+  /** Route-verdict probe; off by default (it appends synchronously per request). */
+  routeProbe: boolean
 }
 
 /** 回顾文本默认硬上限（字符），同时是提示词里向模型声明的硬预算。 */
@@ -91,6 +93,7 @@ export const Config = z.object({
   reasoningEffort: z.string().default('').description('Optional adapter-owned effort id. Empty sends no reasoningEffort.'),
   temperature: z.number().min(0).max(2).description('Optional sampling temperature. Omit to use the adapter default.'),
   stopSequences: z.array(z.string().min(1).max(200)).default([]).description('Optional stop sequences passed to the recap model.'),
+  routeProbe: z.boolean().default(false).description('Write the per-request routing verdict to <plugin-data>/route-probe.log. Off by default: the probe appends synchronously on the recap route and logs every rejection forever, so leaving it on under a polling client keeps hitting the disk.'),
 })
 
 /** Capability-owned timeout reason code for auxiliary recap requests. */
@@ -700,6 +703,9 @@ function allowedLoopbackRequest(req: IncomingMessage): boolean {
 /** 路由判定探针上限：放行请求只留前若干条，拒绝请求永远留档。 */
 const PROBE_ACCEPTED_LIMIT = 20
 
+/** 探针关闭时的空实现：判定逻辑一行都不进，路由热路径上不留任何同步 fs 调用。 */
+const NO_ROUTE_PROBE: (req: IncomingMessage, verdict: TrustVerdict) => void = () => {}
+
 /**
  * 路由判定探针日志。`forbidden origin` 这类报告靠猜无法定位（remote / host /
  * origin 三关同码返回），这里把每条请求的判定事实写进 plugin-data 目录，诊断
@@ -737,7 +743,7 @@ function mountWebRoute(
   config: Config,
 ): void {
   webCtx.effect(() => {
-    const probe = createRouteProbe(store.directory)
+    const probe = config.routeProbe ? createRouteProbe(store.directory) : NO_ROUTE_PROBE
     const dispose = webCtx.webServer.register({
       kind: 'exact',
       path: RECAP_ROUTE,

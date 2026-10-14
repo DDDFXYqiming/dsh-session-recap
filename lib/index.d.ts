@@ -57,6 +57,8 @@ export interface Config {
     temperature?: number;
     /** Optional stop sequences passed to the recap model. */
     stopSequences: string[];
+    /** Route-verdict probe; off by default (it appends synchronously per request). */
+    routeProbe: boolean;
 }
 export declare const Config: z<Schemastery.ObjectS<{
     enabled: z<boolean, boolean>;
@@ -74,6 +76,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     reasoningEffort: z<string, string>;
     temperature: z<number, number>;
     stopSequences: z<string[], string[]>;
+    routeProbe: z<boolean, boolean>;
 }>, Schemastery.ObjectT<{
     enabled: z<boolean, boolean>;
     hostCommand: z<boolean, boolean>;
@@ -90,6 +93,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     reasoningEffort: z<string, string>;
     temperature: z<number, number>;
     stopSequences: z<string[], string[]>;
+    routeProbe: z<boolean, boolean>;
 }>>;
 type AppContext = Context & {
     llm: LlmService;
