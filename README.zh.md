@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前插件版本为 **0.1.10**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前插件版本为 **0.1.11**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -93,7 +93,20 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 ## 安全边界
 
-`/api/dsh-session-recap` route 仅接受 loopback 连接：校验远端地址、`Host` 头与 `Origin`。`Host` 用锚定正则匹配，阻断 DNS rebinding；跨端口、跨协议与伪造 Host 的请求一律拒绝。写入面 POST（presence 上报与手动生成）强制要求精确同源的浏览器 `Origin`，非法来源不会触发生成。读取面 GET 不要求 `Origin`：任何能访问该本机端口、且能通过地址与 Host 校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述 loopback 与同源校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
+`/api/dsh-session-recap` route 仅接受 loopback 连接，判定口径与 DSH 自己的 `/api` 信任栅栏（client-connection 的 api-request-trust）一致，另加「只服务本机」的收紧：
+
+- 远端地址必须是回环地址（127.0.0.1 / ::1 / ::ffff:127.0.0.1）。
+- `Host` 头用锚定正则只认回环 authority，阻断 DNS rebinding；伪造 Host 的请求一律拒绝。
+- 浏览器标记按 DSH 口径：`Sec-Fetch-Site: cross-site` 一律拒绝；`Origin` 缺席放行（Host 栅栏已绑定请求，本地传输不补该头）；`Origin` 存在时必须可解析、非字面 "null"（file: / srcdoc 沙箱的不透明源），且 host 与 `Host` 头一致——协议差异不影响判定，TLS 代理终止后转发到明文端口是合法形态。
+
+跨端口、跨协议的浏览器 `Origin` 与显式跨站写入不会触发生成。读取面 GET 任何能访问该本机端口、且通过上述校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
+
+判定事实会写入 sidecar 目录的 `route-probe.log`（放行请求只留前 20 条，拒绝请求全部留档），用于定位 `forbidden origin` 类报告；写日志失败不影响 route 本身。
+
+## 0.1.11 更新
+
+- 修复 DSH 0.2 桌面壳下插件整体不可用：`/recap` 与 presence 上报被 `403 forbidden origin` 全部误杀。旧判定要求写入面 POST 携带与 `protocol//host` 逐字节相同的 `Origin`，而宿主传输不保证补写该头（浏览器保留 `Origin`，客户端无法自行补写）。判定改为与 DSH `/api` 栅栏同口径：`Host` 回环栅栏 + `Sec-Fetch-Site` 跨站拒绝 + `Origin` 缺席放行、存在则比对 host。跨站与跨端口写入仍被拒绝。
+- 新增 `route-probe.log` 路由判定探针，`forbidden origin` 报告可直接读事实定位。
 
 ## 0.1.10 更新
 

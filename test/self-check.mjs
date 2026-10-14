@@ -16,6 +16,7 @@ const {
   presenceIsAway,
   nextPresenceExpiry,
   allowedLoopbackRequest,
+  requestTrustVerdict,
   isInteractiveSession,
 } = internals
 
@@ -137,15 +138,31 @@ check('max-token salvage requires and keeps complete sentences', () => {
   assert.equal(completeSentences('Complete answer.'), 'Complete answer.')
 })
 
-check('same-origin validation rejects cross-port and origin-less writes', () => {
-  const request = (origin) => ({
+check('same-origin validation mirrors the DSH /api trust fence on loopback', () => {
+  const request = (origin, extra = {}) => ({
     socket: { remoteAddress: '127.0.0.1' },
-    headers: { host: 'localhost:3080', ...(origin === undefined ? {} : { origin }) },
+    headers: { host: 'localhost:3080', ...(origin === undefined ? {} : { origin }), ...extra },
   })
-  assert.equal(allowedLoopbackRequest(request('http://localhost:3080'), true), true)
-  assert.equal(allowedLoopbackRequest(request('http://localhost:5173'), true), false)
-  assert.equal(allowedLoopbackRequest(request(undefined), true), false)
-  assert.equal(allowedLoopbackRequest(request(undefined), false), true)
+  const verdict = (req) => requestTrustVerdict(req)
+  // 精确同源放行；跨端口 Origin 拒绝
+  assert.equal(verdict(request('http://localhost:3080')).ok, true)
+  assert.equal(verdict(request('http://localhost:5173')).ok, false)
+  assert.equal(verdict(request('http://localhost:5173')).reason, 'origin-mismatch')
+  // Origin 缺席放行（DSH /api 同口径：Host 栅栏已绑定请求；桌面壳传输不补 Origin）
+  assert.equal(verdict(request(undefined)).ok, true)
+  // 协议差异不影响：host 一致即同 authority（TLS 代理终止转发是合法形态）
+  assert.equal(verdict(request('https://localhost:3080')).ok, true)
+  // 字面 "null"（file:/srcdoc 沙箱不透明源）与显式跨站一律拒
+  assert.equal(verdict(request('null')).ok, false)
+  assert.equal(verdict(request('null')).reason, 'origin-null')
+  assert.equal(verdict(request('http://localhost:3080', { 'sec-fetch-site': 'cross-site' })).ok, false)
+  assert.equal(verdict(request('http://localhost:3080', { 'sec-fetch-site': 'cross-site' })).reason, 'sec-fetch-site')
+  // 非回环远端与伪造 Host 一律拒（DNS rebinding 防线）
+  assert.equal(verdict({ socket: { remoteAddress: '192.168.1.9' }, headers: { host: 'localhost:3080' } }).reason, 'remote')
+  assert.equal(verdict({ socket: { remoteAddress: '127.0.0.1' }, headers: { host: 'evil.example.com:3080', origin: 'http://evil.example.com:3080' } }).reason, 'host')
+  // 布尔形态对外仍然成立
+  assert.equal(allowedLoopbackRequest(request('http://localhost:3080')), true)
+  assert.equal(allowedLoopbackRequest(request('http://localhost:5173')), false)
 })
 
 check('presence is aggregated per client and ignores stale events', () => {

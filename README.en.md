@@ -13,7 +13,7 @@ When working across complex development workflows, engineers constantly multitas
 * **Multi-Client Presence Tracking**: Uses heartbeats and lease renewal to accurately distinguish between active and away states across browser instances. Invocations occur strictly when the session is unfocused and idle past thresholds (defaults to 3 minutes and at least 3 completed turns).
 * **Zero-Pollution Sidecar Storage**: Summaries are isolated in sidecar files under `~/.dsh/plugin-data/dsh-session-recap/`. It never mutates DSH's append-only event logs and consumes zero conversational token context.
 * **Bounded Input & Crisp Verdicts**: Strips verbose tool output, retains compaction summaries, and anchors directly to the human user's latest command. Delivers 2–4 concise sentences matching the user's primary language without robotic conversational filler.
-* **Hardened Security Perimeter**: Enforces strict loopback verification, exact Host header matching, and same-origin validation, safeguarding against DNS rebinding and cross-port forged queries.
+* **Hardened Security Perimeter**: The route trust fence mirrors DSH's own `/api` fence—strict loopback verification and anchored Host matching defeat DNS rebinding, while explicit cross-site writes and opaque origins are refused; legitimate local transports (including ones that never attach an `Origin` header) pass normally.
 * **Dual Operation Modes**: Renders an interactive card directly above the composer in the Web UI, with full support for headless CLI terminals via the `/recap` command.
 
 ---

@@ -172,6 +172,7 @@ export declare const internals: {
     presenceIsAway: typeof presenceIsAway;
     nextPresenceExpiry: typeof nextPresenceExpiry;
     allowedLoopbackRequest: typeof allowedLoopbackRequest;
+    requestTrustVerdict: typeof requestTrustVerdict;
     isInteractiveSession: typeof isInteractiveSession;
     recapProjectionDefinition: {
         key: "sessionRecap";
@@ -193,7 +194,31 @@ export declare const internals: {
 };
 /** 发给辅助模型的有界回顾指令；maxChars 同时是提示词里声明的硬预算。 */
 declare function systemPrompt(maxChars?: number): string;
-declare function allowedLoopbackRequest(req: IncomingMessage, requireOrigin: boolean): boolean;
+type TrustVerdict = {
+    ok: true;
+} | {
+    ok: false;
+    reason: string;
+};
+/**
+ * Web 路由信任栅栏。判定口径与 DSH 自己的 `/api` 栅栏（client-connection 的
+ * api-request-trust）一致，另加本插件自设的「只服务本机」收紧：
+ *
+ * 1. 远端地址必须是回环（127.0.0.1 / ::1 / ::ffff:127.0.0.1）；
+ * 2. `Host` 头必须是回环 authority（锚定正则），阻断 DNS rebinding——浏览器
+ *    按它以为的地址填 Host，rebind 页面带的是攻击者域名，这道栅栏拦得住；
+ * 3. 浏览器标记按 DSH 口径：`Sec-Fetch-Site: cross-site` 一律拒；`Origin` 缺席
+ *    放行（Host 栅栏已绑定请求，本地传输不补 Origin）；`Origin` 存在则必须可
+ *    解析、非字面 "null"（file:/srcdoc 沙箱的不透明源），且 host 与 `Host` 头
+ *    一致——协议差异不影响判定（TLS 代理终止后转发到明文端口是合法形态）。
+ *
+ * 旧实现要求写入面 POST 携带与 `protocol//host` 逐字节相同的 `Origin`。DSH 0.2
+ * 桌面壳里合法的本机请求并不保证带上这个头，于是 `/recap` 与 presence 上报被
+ * 全部误杀成 403 forbidden origin（2026-10-14 实测）。浏览器保留 `Origin` 头，
+ * 客户端无法自行补写，修法只能是服务端判定与宿主 `/api` 同口径。
+ */
+declare function requestTrustVerdict(req: IncomingMessage): TrustVerdict;
+declare function allowedLoopbackRequest(req: IncomingMessage): boolean;
 declare function updateClientPresence(clients: Map<string, ClientPresence>, clientId: string, sequence: number, active: boolean, now: number): boolean;
 declare function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean;
 declare function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | undefined;
