@@ -5,25 +5,25 @@ import vm from 'node:vm'
 import React from 'react'
 import { act, create } from 'react-test-renderer'
 
-// 用真实 React 生命周期复现回顾先返回、历史时间线后加载的顺序。
-test('刷新恢复与加载旧页保留回顾，新消息和手动关闭仍能收起', async () => {
-  const dismissed = new Map()
+// 卡片仅依赖回顾路由，可选的 turnSeq/turnOpen 用于识别过期结果。
+// 现有宿主通过 recap: null 清除旧回顾。
+function loadPlugin(dismissed, state) {
   let bundle
   let slot
-  let chat = { order: [], nodes: new Map() }
-  const recap = { text: '已完成文件验证。', turnSeq: 10, at: 123456 }
+  const listeners = { window: {}, document: {} }
+  const on = (scope) => (type, fn) => { (listeners[scope][type] ??= []).push(fn) }
   const sandbox = {
     window: {
       __ModuleLoader__: { load(value) { bundle = value } },
       sessionStorage: { getItem: key => dismissed.get(key) ?? null, setItem: (key, value) => dismissed.set(key, value) },
-      addEventListener() {}, removeEventListener() {},
+      addEventListener: on('window'), removeEventListener() {},
     },
     document: {
       hidden: false, hasFocus: () => true,
       querySelector: () => ({ dataset: {}, style: {} }),
-      addEventListener() {}, removeEventListener() {},
+      addEventListener: on('document'), removeEventListener() {},
     },
-    fetch: async () => ({ ok: true, json: async () => ({ recap }) }),
+    fetch: async () => ({ ok: true, json: async () => state.body }),
     setTimeout, clearTimeout, setInterval, clearInterval, AbortController, AbortSignal,
   }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), sandbox)
@@ -38,11 +38,23 @@ test('刷新恢复与加载旧页保留回顾，新消息和手动关闭仍能�
     inject() {},
     slots: { inject(_name, setup) { setup() }, register(_spec, render) { slot = render; return () => {} } },
   })
-  const props = {
-    sessionId: 'refresh-fixture',
-    useSession: selector => selector({ running: false }),
-    useConversation: selector => selector({ views: { get: () => chat } }),
+  // 卡片的数据只走 HTTP 轮询；窗口重新获得焦点会立刻补一次拉取，
+  // 这既是“用户回来了”的时刻，也是测试推进一轮轮询的入口。
+  const fire = async (scope, type) => {
+    await act(async () => {
+      for (const fn of listeners[scope][type] ?? []) fn()
+      await new Promise(resolve => setTimeout(resolve, 30))
+    })
   }
+  return { slot, fire }
+}
+
+test('卡片只认路由响应，宿主未提供新鲜度字段时照常显示', async () => {
+  const dismissed = new Map()
+  const recap = { text: '已完成文件验证。', turnSeq: 10, at: 123456 }
+  const state = { body: { recap, turnSeq: 10, turnOpen: false } }
+  const { slot, fire } = loadPlugin(dismissed, state)
+  const props = { sessionId: 'refresh-fixture' }
   let renderer
   const render = async () => {
     await act(async () => {
@@ -53,41 +65,68 @@ test('刷新恢复与加载旧页保留回顾，新消息和手动关闭仍能�
   const notes = () => renderer.root.findAllByProps({ role: 'note' }).length
   try {
     await render()
+    await fire('window', 'focus')
     assert.equal(notes(), 1, '回顾可先于历史消息显示')
-    chat = { order: ['history'], nodes: new Map([['history', { kind: 'message', anchorSeq: 9 }]]) }
-    await render()
-    assert.equal(notes(), 1, '历史回放不能关闭卡片')
-    assert.equal(dismissed.size, 0, '历史回放不能写入关闭记录')
-    chat = { order: ['history', 'tail'], nodes: new Map([
-      ['history', { kind: 'user', anchorSeq: 9 }], ['tail', { kind: 'turn-tail', anchorSeq: 10.1 }],
-    ]) }
-    await render()
-    assert.equal(notes(), 1, '尾部控件的小数排序坐标不属于新事件')
-    assert.equal(dismissed.size, 0)
-    chat = { order: ['older', 'history'], nodes: new Map([
-      ['older', { kind: 'message', anchorSeq: 2 }], ['history', { kind: 'message', anchorSeq: 9 }],
-    ]) }
-    await render()
-    assert.equal(notes(), 1, '加载更早的消息仍保留卡片')
-    chat = { order: ['history', 'new'], nodes: new Map([
-      ['history', { kind: 'message', anchorSeq: 9 }], ['new', { kind: 'message', anchorSeq: 11 }],
-    ]) }
-    await render()
-    assert.equal(notes(), 0, '新消息正常收起旧回顾')
-    assert.equal(dismissed.size, 1)
 
-    await act(async () => renderer.unmount())
-    renderer = null
-    dismissed.clear()
-    chat = { order: [], nodes: new Map() }
+    // 新回合开始：宿主报 turnOpen，卡片必须收起且写进关闭记录。
+    state.body = { recap, turnSeq: 10, turnOpen: true }
+    await fire('window', 'focus')
+    assert.equal(notes(), 0, '宿主开启新回合即收起旧回顾')
+    assert.equal(dismissed.size, 1, '收起要落关闭记录，避免闪回')
+
+    // 旧宿主：响应里没有 turnSeq/turnOpen，只有 sidecar 说话。
+    // 换一个会话 id：上一轮已经写入关闭记录（内存镜像 + sessionStorage），
+    // 同一会话理应继续保持收起。
+    props.sessionId = 'legacy-host-fixture'
+    state.body = { recap, manualRequestTimeoutMs: 70000 }
     await render()
+    await fire('window', 'focus')
+    assert.equal(notes(), 1, '缺少新鲜度字段的宿主不能把卡片判死')
     await act(async () => renderer.root.findByProps({ 'aria-label': 'dismiss' }).props.onClick())
     assert.equal(notes(), 0, '关闭按钮保持有效')
-    await act(async () => renderer.unmount())
-    renderer = null
-    await render()
-    assert.equal(notes(), 0, '手动关闭结果在重新挂载后保持')
   } finally {
     if (renderer) await act(async () => renderer.unmount())
   }
+})
+
+test('关闭按钮的结果在重新挂载后保持', async () => {
+  const dismissed = new Map()
+  const recap = { text: '已完成文件验证。', turnSeq: 10, at: 123456 }
+  const state = { body: { recap, turnSeq: 10, turnOpen: false } }
+  const { slot, fire } = loadPlugin(dismissed, state)
+  const props = { sessionId: 'remount-fixture' }
+  let renderer
+  const render = async () => {
+    await act(async () => {
+      if (renderer) renderer.update(slot(props))
+      else renderer = create(slot(props))
+    })
+  }
+  try {
+    await render()
+    await fire('window', 'focus')
+    assert.equal(renderer.root.findAllByProps({ role: 'note' }).length, 1)
+    await act(async () => renderer.root.findByProps({ 'aria-label': 'dismiss' }).props.onClick())
+    await act(async () => renderer.unmount())
+    renderer = null
+    await render()
+    await fire('window', 'focus')
+    assert.equal(renderer.root.findAllByProps({ role: 'note' }).length, 0, '手动关闭结果在重新挂载后保持')
+  } finally {
+    if (renderer) await act(async () => renderer.unmount())
+  }
+})
+
+test('客户端不再订阅 useSession/useConversation', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('useConversation'), false, '时间线选择器必须从客户端消失')
+  assert.equal(source.includes('useSession'), false, '会话 store 订阅必须从客户端消失')
+})
+
+test('src/client.js 与 lib/client.js 同步（构建产物不得落后于源码）', () => {
+  assert.equal(
+    readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'),
+    readFileSync(new URL('../src/client.js', import.meta.url), 'utf8'),
+    'lib/client.js 与 src/client.js 不一致，先跑 npm run build:client',
+  )
 })

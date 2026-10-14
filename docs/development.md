@@ -30,14 +30,16 @@ npm pack
 
 DSH 桌面壳把应用挂在自定义协议 `dsh-app://app/` 下，页面 fetch 经壳转发到宿主 webserver 时**不携带 `Origin` 头**（2026-10-14 实测：探针日志 `origin=` 为空）。因此路由信任栅栏必须与 DSH 自己的 `/api` 栅栏同口径：回环远端 + 锚定 `Host` 栅栏，`Sec-Fetch-Site: cross-site` 与字面 `null` 来源拒绝，`Origin` 缺席放行、存在则比对 host。任何要求“逐字节同源 Origin”的判定在桌面壳下会把全部请求误杀成 `403 forbidden origin`。诊断同类问题直接读 sidecar 目录的 `route-probe.log`。
 
-## 运行中宿主的免重启换代
+## 客户端调度
 
-DSH 的 Loader 对插件模块的 import 按（specifier，解析基址）缓存：同名重导入永远命中旧模块，改配置只走 `internal/update` 不重新 import。`link:` 源码安装的插件要让运行中的宿主吃到新构建，唯一免重启路径是**换一个全新的 specifier 触发全新 import**：
+回顾卡片仅通过 HTTP 读取宿主的 sidecar 结果，不订阅会话时间线。宿主在新回合开始后清除旧回顾；响应中的 `recap: null` 会隐藏卡片。若响应包含可选的 `turnSeq`、`turnOpen`，客户端也会据此识别过期结果。
 
-1. 构建产物拷到全新路径（如 `.install/<版本>/`，`.install/` 已在 .gitignore）。
-2. 在 `profiles/<p>/node_modules/@dsh-external/` 下建真实包目录（如 `dsh-session-recap-live`），`package.json` 的 `name` 必须等于包名本身（client 图按 name 字段归属行），`lib/` 拷自新产物，`node_modules` 建链接指向源码仓库的 `node_modules` 供运行期依赖解析。
-3. 改该副本 `lib/client.js` 里烘焙的 `__ModuleLoader__.load({ id: ... })` 为新包名——client 图的行 id 是包名，与烘焙 id 不一致时 bundle 加载即抛“loaded without registering”。
-4. 在 profile 的 `cordis.patch.yml` 用裸条目停用旧 entry、用 `insert` 增加指向新包名的新 entry（id 不可与旧条目重复），patch watcher 触发换代。
-5. 强刷 GUI 页面装载新 client bundle。
+有卡片、失败提示或手动生成请求时，每 1.5 秒拉取；其余时间每 10 秒拉取。页面隐藏时暂停拉取，重新可见或获得焦点时立即补取。单次请求超时为 4 秒，卸载组件时中止在途请求并清除定时器。关闭记录包含会话、回合序号和生成时间，并在当前页内缓存。
 
-注意：该载体包不在 profile 的 `package.json` 依赖里，profile 上跑 pnpm 安装可能清掉它，需要按本节重建；正常的版本更新与安装走受管通道即可，无需此流程。
+在线心跳每 20 秒发送一次，小于宿主的 45 秒租约；同一会话的重复焦点通知在 2 秒内合并。
+
+## 安装与更新
+
+使用插件管理器维护正式包的安装记录。本地源码安装指向仓库根目录，构建后的 `lib` 与源码保持同步。宿主会缓存服务端模块导入，因此服务端更新完成后需完全退出并重新打开宿主。
+
+路由探针 `routeProbe` 默认关闭，排查来源判定时可临时开启。诊断完成后恢复关闭，避免在请求路径执行同步文件写入。

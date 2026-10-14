@@ -1,6 +1,4 @@
-// Web client half of @dsh-external/dsh-session-recap.
-// It reads the host-owned sidecar snapshot through a same-origin route and
-// renders a dismissible away-summary banner in the conversation dock.
+// 回顾卡片从宿主路由读取结果，避免订阅和扫描整条会话时间线。
 window.__ModuleLoader__.load({
   id: '@dsh-external/dsh-session-recap',
   factory: (require) => {
@@ -13,12 +11,13 @@ window.__ModuleLoader__.load({
     var RecapIcon
     try { RecapIcon = require('@deepseek-ai/dsh-client-ui-primitives').IconListPenOutline16 } catch (_) { RecapIcon = undefined }
     var NS = '@dsh-external/dsh-session-recap'
-    var POLL_MS = 2000
+    // 生成中或有可见提示时快速拉取，其余时间降低频率。
+    var POLL_ACTIVE_MS = 1500
+    var POLL_IDLE_MS = 10000
     var POLL_TIMEOUT_MS = 4000
-    var PRESENCE_HEARTBEAT_MS = 15000
-    // Manual /recap POST deadline (ms). Mirrors the Config.manualRequestTimeoutMs
-    // default; every route poll refreshes it from the host's live value, so a
-    // raised server-side timeoutMs extends this deadline too.
+    // 心跳间隔小于宿主的 45 秒在线租约。
+    var PRESENCE_HEARTBEAT_MS = 20000
+    var PRESENCE_DEDUPE_MS = 2000
     var manualRequestTimeoutMs = 70000
     var presenceClientId = createPresenceClientId()
     var presenceSequence = 0
@@ -34,10 +33,6 @@ window.__ModuleLoader__.load({
       '.sr-recap-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}',
     ].join('\n')
     var styleId = NS + '/recap.css'
-    // Style lifecycle: the data-plugin-css marker makes re-materialization
-    // idempotent, but the host loader only reclaims styles it creates itself, so
-    // disposing the plugin leaves these rules on the page until the next page
-    // refresh. With the banner DOM gone they render nothing.
     if (typeof document !== 'undefined') {
       var style = document.querySelector('style[data-plugin-css="' + styleId + '"]')
       if (style === null) {
@@ -57,40 +52,55 @@ window.__ModuleLoader__.load({
       return at === null || at === undefined ? '0' : String(at)
     }
 
-    // Identity includes the generation timestamp: /recap commands do not open
-    // turns, so several recaps can share one turnSeq anchor. Dismissing one
-    // generation must not silence the next.
-    function dismissalKey(sessionId, turnSeq, at) {
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return null
-      return String(sessionId) + ':' + turnPart(turnSeq) + ':' + atPart(at)
-    }
-
     function sessionStorageKey(sessionId) {
       return dismissedStoragePrefix + encodeURIComponent(String(sessionId))
     }
 
+    function validSessionId(sessionId) {
+      return !(sessionId === undefined || sessionId === null || String(sessionId) === '')
+    }
+
+    function dismissalKey(sessionId, turnSeq, at) {
+      if (!validSessionId(sessionId)) return null
+      return String(sessionId) + ':' + turnPart(turnSeq) + ':' + atPart(at)
+    }
+
     function legacyStorageKey(sessionId, turnSeq) {
-      return legacyDismissedStoragePrefix + encodeURIComponent(dismissalKey(sessionId, turnSeq))
+      return legacyDismissedStoragePrefix + encodeURIComponent(String(sessionId) + ':' + turnPart(turnSeq))
+    }
+
+    // 当前页内缓存新旧格式的关闭记录，渲染时不重复访问同步存储。
+    var dismissedCache = new Map()
+
+    function readStorage(key) {
+      if (typeof window === 'undefined') return null
+      try { return window.sessionStorage.getItem(key) } catch (_) { return null }
+    }
+
+    function writeStorage(key, value) {
+      if (typeof window === 'undefined') return
+      try { window.sessionStorage.setItem(key, value) } catch (_) {}
+    }
+
+    function cachedDismissal(sessionId, key) {
+      if (!dismissedCache.has(key)) dismissedCache.set(key, readStorage(key))
+      return dismissedCache.get(key)
     }
 
     function wasDismissed(sessionId, turnSeq, at) {
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return false
-      if (typeof window === 'undefined') return false
+      if (!validSessionId(sessionId)) return false
       var expected = turnPart(turnSeq) + ':' + atPart(at)
-      try {
-        if (window.sessionStorage.getItem(sessionStorageKey(sessionId)) === expected) return true
-        // Keep dismissals made by the pre-sidecar client version effective.
-        return window.sessionStorage.getItem(legacyStorageKey(sessionId, turnSeq)) === '1'
-      } catch (_) {
-        return false
-      }
+      var key = sessionStorageKey(sessionId)
+      if (cachedDismissal(sessionId, key) === expected) return true
+      return cachedDismissal(sessionId, legacyStorageKey(sessionId, turnSeq)) === '1'
     }
 
     function rememberDismissed(sessionId, turnSeq, at) {
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
-      if (typeof window === 'undefined') return
+      if (!validSessionId(sessionId)) return
       var value = turnPart(turnSeq) + ':' + atPart(at)
-      try { window.sessionStorage.setItem(sessionStorageKey(sessionId), value) } catch (_) {}
+      var key = sessionStorageKey(sessionId)
+      dismissedCache.set(key, value)
+      writeStorage(key, value)
     }
 
     function validRecap(value) {
@@ -104,8 +114,17 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // Manual `/recap` runs through the host route from the client-owned row.
-    // Its outcome is shown in this same card.
+    function isStale(recap, turnSeq, turnOpen) {
+      if (recap === null) return false
+      if (turnOpen === true) return true
+      if (recap.turnSeq === null) return false
+      return typeof turnSeq === 'number' && turnSeq > recap.turnSeq
+    }
+
+    function loadable(value) {
+      return value !== null && value !== undefined && typeof value === 'object'
+    }
+
     var notices = new Map()
     var noticeWatchers = new Set()
     function publishNotice(sessionId, message) {
@@ -114,8 +133,9 @@ window.__ModuleLoader__.load({
       else notices.delete(key)
       noticeWatchers.forEach(function (watcher) { watcher() })
     }
-    // Live banner polls, so a manual recap lands without waiting for the next tick.
     var pollers = new Map()
+    var pendingManual = new Map()
+
     function createPresenceClientId() {
       try {
         if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -125,25 +145,29 @@ window.__ModuleLoader__.load({
 
     function requestManualRecap(session, t) {
       var sessionId = session === undefined || session === null ? undefined : session.sessionId
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
+      if (!validSessionId(sessionId)) return
       var key = String(sessionId)
       var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(key) + '&action=generate'
-      // Same lesson as the 006 poll deadline: a hot-reloaded host can abandon
-      // this POST without ever settling it, leaving the user no outcome at all.
-      // The deadline only ends the browser's wait; the host keeps generating on
-      // its own signal, so the recap still surfaces through the next poll.
+      pendingManual.set(key, (pendingManual.get(key) ?? 0) + 1)
+      var poll = pollers.get(key)
+      if (poll !== undefined) poll()
       fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(manualRequestTimeoutMs) })
         .then(function (response) { return response.json().catch(function () { return null }) })
         .then(function (body) {
           if (body !== null && body.ok === true) {
             publishNotice(key, null)
-            var poll = pollers.get(key)
-            if (poll !== undefined) poll()
+            var again = pollers.get(key)
+            if (again !== undefined) again()
             return
           }
           publishNotice(key, body !== null && typeof body.error === 'string' && body.error !== '' ? body.error : t('failed'))
         })
         .catch(function () { publishNotice(key, t('failed')) })
+        .finally(function () {
+          var left = (pendingManual.get(key) ?? 1) - 1
+          if (left <= 0) pendingManual.delete(key)
+          else pendingManual.set(key, left)
+        })
     }
 
     function isWindowActive() {
@@ -152,10 +176,16 @@ window.__ModuleLoader__.load({
     }
 
     function reportPresence(sessionId, active) {
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') return
+      if (!validSessionId(sessionId)) return
+      var state = active ? 'active' : 'away'
+      var now = Date.now()
+      if (presenceSession === String(sessionId) && presenceState === state && now - presenceAt < PRESENCE_DEDUPE_MS) return
+      presenceSession = String(sessionId)
+      presenceState = state
+      presenceAt = now
       presenceSequence += 1
       var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(String(sessionId))
-        + '&presence=' + (active ? 'active' : 'away')
+        + '&presence=' + state
         + '&clientId=' + encodeURIComponent(presenceClientId)
         + '&seq=' + String(presenceSequence)
       try {
@@ -163,74 +193,17 @@ window.__ModuleLoader__.load({
       } catch (_) {}
     }
 
+    var presenceSession = null
+    var presenceState = null
+    var presenceAt = 0
+
     function RecapBanner(props) {
       var sessionId = props.sessionId
-      var sessionKey = sessionId === undefined || sessionId === null ? '' : String(sessionId)
-      var recapState = react.useState({ owner: '', value: null })
-      var loadedRecap = recapState[0]
-      var setLoadedRecap = recapState[1]
-      var recap = loadedRecap.owner === sessionKey ? loadedRecap.value : null
-      var dismissed = react.useState(null)
-      var dismissedKey = dismissed[0]
-      var setDismissedKey = dismissed[1]
-      var shownKey = react.useRef(null)
-      var useSession = props.useSession
-      var useConversation = props.useConversation
-      // Session lifecycle part works on both host generations (pending is
-      // absent-safe: newer snapshots may omit it).
-      var sessionActivity = useSession(function (snapshot) {
-        var pending = Array.isArray(snapshot.pending) ? snapshot.pending.length : ''
-        return String(snapshot.running) + ':' + String(pending)
-      })
-      // Chat timeline part: the chat projection moved out of the Session
-      // snapshot into Conversation views ('chat' target). Fall back to the
-      // legacy snapshot.chat shape when useConversation is absent (old hosts).
-      var chatActivity = useConversation
-        ? useConversation(function (conversation) {
-            var chat = conversation.views.get('chat')
-            var order = chat ? chat.order : []
-            var visibleCount = 0
-            var lastVisible = ''
-            for (var index = 0; index < order.length; index += 1) {
-              var key = order[index]
-              if (chat.nodes.get(key)?.kind === 'command') continue
-              visibleCount += 1
-              lastVisible = key
-            }
-            return String(visibleCount) + ':' + lastVisible
-          })
-        : useSession(function (snapshot) {
-            var chat = snapshot.chat
-            if (!chat || !Array.isArray(chat.order)) return ''
-            var visibleCount = 0
-            var lastVisible = ''
-            for (var index = 0; index < chat.order.length; index += 1) {
-              var key = chat.order[index]
-              if (chat.nodes.get(key)?.kind === 'command') continue
-              visibleCount += 1
-              lastVisible = key
-            }
-            return String(visibleCount) + ':' + lastVisible
-          })
-      // 新版时间线会在刷新后分批恢复；只有晚于回顾锚点的消息才属于新活动。
-      var latestChatSeq = useConversation
-        ? useConversation(function (conversation) {
-            var chat = conversation.views.get('chat')
-            var order = chat ? chat.order : []
-            var latest = -1
-            var unanchored = false
-            for (var index = 0; index < order.length; index += 1) {
-              var node = chat.nodes.get(order[index])
-              if (!node || node.kind === 'command') continue
-              if (!Number.isFinite(node.anchorSeq)) { unanchored = true; continue }
-              // anchorSeq 的小数部分只用于尾部控件排序，不代表新增持久事件。
-              latest = Math.max(latest, Math.floor(node.anchorSeq))
-            }
-            return latest < 0 && unanchored ? null : latest
-          })
-        : null
-      var activityKey = sessionActivity + ':' + chatActivity + ':' + String(latestChatSeq)
-      var lastActivity = react.useRef(activityKey)
+      var sessionKey = !validSessionId(sessionId) ? '' : String(sessionId)
+      var recapState = react.useState({ owner: '', value: null, stale: false })
+      var loaded = recapState[0]
+      var setLoaded = recapState[1]
+      var recap = loaded.owner === sessionKey && loaded.stale !== true ? loaded.value : null
       var noticeState = react.useState(0)
       var setNoticeTick = noticeState[1]
       react.useEffect(function () {
@@ -239,22 +212,48 @@ window.__ModuleLoader__.load({
         return function () { noticeWatchers.delete(watcher) }
       }, [])
       var notice = notices.get(sessionKey) || null
+      var dismissedKeyState = react.useState(null)
+      var dismissedKey = dismissedKeyState[0]
+      var setDismissedKey = dismissedKeyState[1]
 
-      // The host route is deliberately polled: the HTTP carrier has no
-      // projection push channel for plugin-owned sidecar state.
       react.useEffect(function () {
-        setLoadedRecap({ owner: sessionKey, value: null })
-        if (sessionKey === '') return undefined
+        if (sessionKey === '') {
+          setLoaded({ owner: '', value: null, stale: false })
+          return undefined
+        }
         var cancelled = false
         var inFlight = false
         var controller = null
+        var timer = null
+        var latest = { value: null, stale: false }
+
+        function cadence() {
+          if (notices.get(sessionKey) !== undefined) return POLL_ACTIVE_MS
+          if ((pendingManual.get(sessionKey) ?? 0) > 0) return POLL_ACTIVE_MS
+          if (latest.value !== null && latest.stale !== true) return POLL_ACTIVE_MS
+          return POLL_IDLE_MS
+        }
+
+        function schedule(delay) {
+          if (cancelled) return
+          if (timer !== null) clearTimeout(timer)
+          timer = setTimeout(load, delay)
+        }
+
+        // 请求结束后再安排下一次；切换会话或卸载时释放请求和定时器。
         function load() {
-          if (cancelled || inFlight || !isWindowActive()) return
+          if (cancelled) return
+          if (timer !== null) {
+            clearTimeout(timer)
+            timer = null
+          }
+          if (typeof document !== 'undefined' && document.hidden === true) return
+          if (inFlight) {
+            schedule(POLL_ACTIVE_MS)
+            return
+          }
           inFlight = true
           controller = new AbortController()
-          // A host hot-reload can abandon an in-flight poll without ever
-          // settling the fetch; without a deadline, inFlight stays true and
-          // this banner goes permanently deaf. The timeout self-heals.
           var pollAbort = setTimeout(function () { controller.abort() }, POLL_TIMEOUT_MS)
           var url = '/api/dsh-session-recap?sessionId=' + encodeURIComponent(sessionKey)
           fetch(url, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
@@ -263,66 +262,61 @@ window.__ModuleLoader__.load({
               return response.json()
             })
             .then(function (body) {
-              if (cancelled || body === null) return
+              if (cancelled || !loadable(body)) return
               if (typeof body.manualRequestTimeoutMs === 'number' && body.manualRequestTimeoutMs > 0) {
                 manualRequestTimeoutMs = body.manualRequestTimeoutMs
               }
-              setLoadedRecap({ owner: sessionKey, value: validRecap(body.recap) })
+              var value = validRecap(body.recap)
+              var stale = isStale(value, typeof body.turnSeq === 'number' ? body.turnSeq : null, body.turnOpen === true)
+              latest = { value: value, stale: stale }
+              setLoaded({ owner: sessionKey, value: value, stale: stale })
             })
             .catch(function () {})
-            .finally(function () { clearTimeout(pollAbort); inFlight = false })
+            .finally(function () {
+              clearTimeout(pollAbort)
+              inFlight = false
+              schedule(cadence())
+            })
         }
+
         load()
         pollers.set(sessionKey, load)
-        var timer = setInterval(load, POLL_MS)
-        document.addEventListener('visibilitychange', load)
-        window.addEventListener('focus', load)
+        var wake = function () { load() }
+        document.addEventListener('visibilitychange', wake)
+        window.addEventListener('focus', wake)
         return function () {
           cancelled = true
           if (pollers.get(sessionKey) === load) pollers.delete(sessionKey)
-          clearInterval(timer)
-          document.removeEventListener('visibilitychange', load)
-          window.removeEventListener('focus', load)
+          if (timer !== null) clearTimeout(timer)
+          document.removeEventListener('visibilitychange', wake)
+          window.removeEventListener('focus', wake)
           if (controller !== null) controller.abort()
         }
       }, [sessionKey])
 
       react.useEffect(function () {
         setDismissedKey(null)
-        shownKey.current = null
-        lastActivity.current = activityKey
       }, [sessionId])
+
+      react.useEffect(function () {
+        if (loaded.owner !== sessionKey || loaded.stale !== true || loaded.value === null) return
+        rememberDismissed(sessionId, loaded.value.turnSeq, loaded.value.at)
+      }, [loaded, sessionId, sessionKey])
 
       var text = recap !== null ? recap.text : null
       var turnSeq = recap !== null ? recap.turnSeq : null
       var at = recap !== null ? recap.at : null
       var currentKey = dismissalKey(sessionId, turnSeq, at)
 
-      // A new chat message is evidence that the user has returned. Only
-      // dismiss a recap that was actually rendered; a hidden-tab recap must
-      // survive until the tab becomes visible.
-      react.useEffect(function () {
-        if (lastActivity.current === activityKey) return
-        lastActivity.current = activityKey
-        var hasNewActivity = latestChatSeq === null || latestChatSeq > turnSeq
-        if (hasNewActivity && text !== null && currentKey !== null && shownKey.current === currentKey && !wasDismissed(sessionId, turnSeq, at)) {
-          rememberDismissed(sessionId, turnSeq, at)
-          setDismissedKey(currentKey)
-        }
-      }, [activityKey, latestChatSeq, text, currentKey, sessionId, turnSeq, at])
-
       react.useEffect(function () {
         if (typeof document === 'undefined' || sessionKey === '') return undefined
-        // Focus only drives host presence reporting (generation trigger); it
-        // must NOT gate rendering — that re-hid a visible card on every OS
-        // window blur. Delivery-on-return is already handled by the
-        // focus-gated poll above.
         function syncPresence() {
           reportPresence(sessionKey, isWindowActive())
         }
         function markAway() {
           reportPresence(sessionKey, false)
         }
+        presenceState = null
         syncPresence()
         var heartbeat = setInterval(syncPresence, PRESENCE_HEARTBEAT_MS)
         document.addEventListener('visibilitychange', syncPresence)
@@ -335,20 +329,14 @@ window.__ModuleLoader__.load({
           window.removeEventListener('focus', syncPresence)
           window.removeEventListener('blur', markAway)
           window.removeEventListener('pagehide', markAway)
+          presenceState = null
           reportPresence(sessionKey, false)
         }
       }, [sessionKey])
 
-      // A failure notice is in-memory state, not a stored recap: dismissing it
-      // never writes the dismissal identity, so the next failure still shows.
       var showRecap = text !== null && currentKey !== null && dismissedKey !== currentKey && !wasDismissed(sessionId, turnSeq, at)
       var show = notice !== null || showRecap
-      react.useEffect(function () {
-        if (showRecap) shownKey.current = currentKey
-      }, [showRecap, currentKey])
 
-      // Hooks above are intentionally unconditional; the slot can briefly
-      // exist without a bound session while the conversation tree mounts.
       if (!show) return null
       var t = props.t || function (key) { return key }
       return react.createElement('div', { className: 'sr-recap-banner', role: 'note' },
@@ -391,8 +379,6 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-session-recap: dictionaries')
       var t = ctx.locale.bind(NS)
-      // The Web profile leaves hostCommand disabled, so this contribution is
-      // the single /recap owner and can supply the full localized menu row.
       ctx.inject(['commandUi'], function (scope) {
         var command = scope.get('commandUi')
         if (command === undefined) return
