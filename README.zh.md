@@ -4,7 +4,7 @@
 
 **DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
 
-当前插件版本为 **0.1.11**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+当前插件版本为 **0.1.12**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.3`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
 
 ## 为什么需要它
 
@@ -103,6 +103,12 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 
 判定事实会写入 sidecar 目录的 `route-probe.log`（放行请求只留前 20 条，拒绝请求全部留档），用于定位 `forbidden origin` 类报告；写日志失败不影响 route 本身。
 
+## 0.1.12 更新
+
+- 兼容 DSH 0.2.1-alpha.3，构建依赖更新至该版本。
+- 识别新版 `compact-checkpoint`，压缩后的回顾继续使用先前任务摘要，并兼容旧会话来源格式。
+- 独立源码构建时补齐会话投影依赖链接。
+
 ## 0.1.11 更新
 
 - 修复 DSH 0.2 桌面壳下插件整体不可用：`/recap` 与 presence 上报被 `403 forbidden origin` 全部误杀。旧判定要求写入面 POST 携带与 `protocol//host` 逐字节相同的 `Origin`，而宿主传输不保证补写该头（浏览器保留 `Origin`，客户端无法自行补写）。判定改为与 DSH `/api` 栅栏同口径：`Host` 回环栅栏 + `Sec-Fetch-Site` 跨站拒绝 + `Origin` 缺席放行、存在则比对 host。跨站与跨端口写入仍被拒绝。
@@ -119,7 +125,7 @@ sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点
 | 项目 | 版本或范围 |
 | --- | --- |
 | dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2`（peerDependencies）；构建与测试钉在 `0.2.0-rc.2`（devDependencies/overrides，保证可复现构建与 git 安装解析），保留 0.1.x 的兼容声明，新增 0.2.0-rc.2 的构建与回归验证 |
+| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.3`（peerDependencies）；构建依赖钉在 `0.2.1-alpha.3`（devDependencies/overrides，保证可复现构建与 git 安装解析），保留 0.1.x 的兼容声明，新增 0.2.1-alpha.3 的构建与宿主验证 |
 | Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
 | 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
 

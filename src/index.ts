@@ -77,7 +77,7 @@ export interface Config {
 /** 回顾文本默认硬上限（字符），同时是提示词里向模型声明的硬预算。 */
 const DEFAULT_MAX_CHARS = 400
 
-export const Config = z.object({
+export const Config: z<Config> = z.object({
   enabled: z.boolean().default(true),
   hostCommand: z.boolean().default(false).description('Register the host /recap command. Enable for headless profiles; leave false when the Web client owns the styled row.'),
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
@@ -281,7 +281,10 @@ function stripMarkdown(text: string): string {
 function isCompactCheckpoint(message: Message): boolean {
   if (message.role !== 'user') return false
   const source = message.source as { kind?: unknown; plugin?: unknown }
-  return source.kind === 'plugin' && source.plugin === 'compact'
+  // 新版使用独立的检查点来源；保留旧会话日志的来源格式。
+  return source.kind === 'compact-checkpoint'
+    || source.kind === 'plugin:compact'
+    || (source.kind === 'plugin' && source.plugin === 'compact')
 }
 
 function frameTranscript(messages: readonly Message[], recentMessages: number, maxBytes: number): string {

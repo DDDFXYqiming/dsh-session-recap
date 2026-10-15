@@ -60,41 +60,7 @@ export interface Config {
     /** Route-verdict probe; off by default (it appends synchronously per request). */
     routeProbe: boolean;
 }
-export declare const Config: z<Schemastery.ObjectS<{
-    enabled: z<boolean, boolean>;
-    hostCommand: z<boolean, boolean>;
-    idleMs: z<number, number>;
-    minTurns: z<number, number>;
-    recentMessages: z<number, number>;
-    maxChars: z<number, number>;
-    maxInputChars: z<number, number>;
-    maxOutputTokens: z<number, number>;
-    timeoutMs: z<number, number>;
-    manualRequestTimeoutMs: z<number, number>;
-    provider: z<string, string>;
-    model: z<string, string>;
-    reasoningEffort: z<string, string>;
-    temperature: z<number, number>;
-    stopSequences: z<string[], string[]>;
-    routeProbe: z<boolean, boolean>;
-}>, Schemastery.ObjectT<{
-    enabled: z<boolean, boolean>;
-    hostCommand: z<boolean, boolean>;
-    idleMs: z<number, number>;
-    minTurns: z<number, number>;
-    recentMessages: z<number, number>;
-    maxChars: z<number, number>;
-    maxInputChars: z<number, number>;
-    maxOutputTokens: z<number, number>;
-    timeoutMs: z<number, number>;
-    manualRequestTimeoutMs: z<number, number>;
-    provider: z<string, string>;
-    model: z<string, string>;
-    reasoningEffort: z<string, string>;
-    temperature: z<number, number>;
-    stopSequences: z<string[], string[]>;
-    routeProbe: z<boolean, boolean>;
-}>>;
+export declare const Config: z<Config>;
 type AppContext = Context & {
     llm: LlmService;
 };
