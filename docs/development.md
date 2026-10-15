@@ -20,6 +20,8 @@ npm pack
 
 构建脚本优先使用本地依赖。针对 DSH checkout 开发时可以设置 `DSH_CHECKOUT`，也可以设置 `DSH_GLOBAL_NODE_MODULES` 指向兼容的全局 `node_modules`。脚本只补建缺失的链接，不替换已有的包。
 
+`zod` 精确固定为 `4.4.3`，与 DSH `0.2.1-alpha.3` 的会话投影契约保持一致。若使用范围版本升级到另一份 Zod，投影注册时会比较两份递归 schema 类型，导致 TypeScript 编译耗尽堆内存。升级 DSH 时应一起核对 Zod 版本，并使用锁文件安装。
+
 上游结构测试默认使用发布标签 `dsh-v0.1.6-alpha.1`。需要核对更新的源码时，用 `DSH_UPSTREAM_REF` 指定分支、标签或提交，不要依赖会移动的引用。
 
 ## 实现约束

@@ -27,8 +27,8 @@ importers:
         specifier: ^3.18.1 || ^3.18.5-alpha.2
         version: 3.18.5-alpha.2
       zod:
-        specifier: ^4.4.3
-        version: 4.5.4
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5-alpha.2
@@ -336,9 +336,6 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
-  zod@4.5.4:
-    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
-
 snapshots:
 
   '@deepseek-ai/cordis@4.0.5-alpha.2':
@@ -461,7 +458,7 @@ snapshots:
     dependencies:
       '@deepseek-ai/cordis': 4.0.5-alpha.2
       '@deepseek-ai/dsh-brand': 0.2.1-alpha.3(@deepseek-ai/cordis@4.0.5-alpha.2)
-      zod: 4.5.4
+      zod: 4.4.3
 
   '@deepseek-ai/dsh-util-crypto@0.2.1-alpha.3(@deepseek-ai/cordis@4.0.5-alpha.2)':
     dependencies:
@@ -560,5 +557,3 @@ snapshots:
   vary@1.1.2: {}
 
   zod@4.4.3: {}
-
-  zod@4.5.4: {}
