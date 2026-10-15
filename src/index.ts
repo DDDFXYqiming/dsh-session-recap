@@ -703,18 +703,11 @@ function allowedLoopbackRequest(req: IncomingMessage): boolean {
   return requestTrustVerdict(req).ok
 }
 
-/** 路由判定探针上限：放行请求只留前若干条，拒绝请求永远留档。 */
 const PROBE_ACCEPTED_LIMIT = 20
 
 /** 探针关闭时的空实现：判定逻辑一行都不进，路由热路径上不留任何同步 fs 调用。 */
 const NO_ROUTE_PROBE: (req: IncomingMessage, verdict: TrustVerdict) => void = () => {}
 
-/**
- * 路由判定探针日志。`forbidden origin` 这类报告靠猜无法定位（remote / host /
- * origin 三关同码返回），这里把每条请求的判定事实写进 plugin-data 目录，诊断
- * 时直接读事实。放行请求只记前 `PROBE_ACCEPTED_LIMIT` 条，拒绝请求全部留档；
- * 写日志永不影响路由本身。
- */
 function createRouteProbe(directory: string): (req: IncomingMessage, verdict: TrustVerdict) => void {
   let accepted = 0
   return (req, verdict) => {
