@@ -93,6 +93,14 @@ check('prompt leads with the current task and names tool noise', () => {
   assert.ok(!prompt.includes('overall goal'))
 })
 
+check('prompt requires naming things the way the project names them', () => {
+  const prompt = systemPrompt(400)
+  assert.match(prompt, /way the project already names it/)
+  assert.match(prompt, /real file, command, symbol, branch, error code or version/)
+  assert.match(prompt, /never a vague stand-in/)
+  assert.match(prompt, /locate it without asking which one you meant/)
+})
+
 check('prompt bans markdown and states the hard character budget', () => {
   const prompt = systemPrompt(400)
   assert.match(prompt, /PLAIN TEXT ONLY/)
