@@ -1,140 +1,171 @@
-简体中文 | [English](README.md)
+---
+description: "窗口失焦或切换会话时生成简短回顾，切回时显示在输入框上方。"
+kind: "package-bundle"
+---
 
 # @dsh-external/dsh-session-recap
 
-**DeepSeek Harness（DSH）会话回顾插件**。你把 Web 窗口切到后台，或者转到另一个会话，它就在后台生成一份简短回顾。等你回来，一张卡片会概括那个会话的当前任务、已完成进展和下一步。
+[English](README.md) | 中文
 
-当前插件版本为 **0.1.12**，peer 兼容范围为 DSH `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.3`。构建直接使用 Node，可在 Windows 与 Linux 下执行 `pnpm build && pnpm test`。
+## 概述
 
-## 为什么需要它
+`@dsh-external/dsh-session-recap` 给 DeepSeek Harness 会话加上离开回顾。该会话的所有 Web 客户端都处于离开状态，并且最后一个完成的回合超过 `idleMs` 时，宿主调用一次辅助模型生成一段纯文本回顾，写入插件自己的数据文件。切回页面时，输入框上方显示这份回顾，内容包括当前任务、关键进展和下一步。`/recap` 可以随时手动生成；没有 Web 客户端的 profile 把 `hostCommand` 设为 `true` 后，同一个命令会直接返回正文。
 
-人离开屏幕的理由很多，可能是一场会，也可能是一顿饭。回来时会话还停在原处，思路却断了。往上翻很久的消息记录，才接得上刚才做到哪里。这个插件让用户回来时先读一段短回顾，再决定从哪里继续。回顾由一次独立的辅助 LLM 请求生成，写好的正文不会追加进会话消息历史。
+## 目录
 
-## 能力
+- [安装](#install)
+- [使用本包](#use-this-package)
+- [配置](#configure)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
 
-- 离开 Web 页面或切换会话后，满足 `idleMs` 和 `minTurns` 才会自动生成；前台停留不会因单纯空闲调用模型。
-- `/recap` 可随时手动触发。Web 菜单保留官方图标、中英文标题和说明；无浏览器 profile 可开启 `hostCommand`，直接得到正文。
-- 回顾显示在输入框上方，可关闭；新消息或切换会话后会隐藏，每个会话只保留当前回顾。
-- 输入会过滤工具输出，保留压缩摘要，并以最近一条真实用户消息定位任务。回顾跟随用户语言，旧模型内联的 think 标签也会被清理。
-- 多标签页按客户端聚合 presence，带心跳和租约；会话发生变化时，旧的生成结果会被丢弃。
-- 结果只写入插件 sidecar，不修改 DSH 会话日志。provider、model、输出长度和超时可配置。
+-----
 
-## 工作方式
-
-1. Web client 报告页面和会话的 `active` / `away` 状态。只有所有有效页面都离开后，Host 才会把会话视为 away。
-2. Host 检查 `idleMs`、`minTurns` 和最新完成轮次，构造有界输入后调用辅助模型。
-3. 会话开始新轮次、前进或销毁时，旧结果不会提交。有效结果写入 sidecar，再由 Web 卡片或 `CommandResult.text` 展示。
-
+<a id="install"></a>
 ## 安装
 
+从 GitHub 安装到 profile。
+
 ```bash
-# GitHub 安装（推荐）
 dsh plugin --profile web add github:DDDFXYqiming/dsh-session-recap
 ```
 
-从本地源码安装的方式如下。
-
-```bash
-git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
-cd dsh-session-recap
-npm install && npm run build
-dsh plugin --profile web add <本目录绝对路径>
-```
-
-GitHub 安装会触发 `prepare` 脚本重新构建 `lib/`。pnpm ≥10 首次 `add` 会拒绝运行该构建脚本。把 pnpm 打印的包键复制进 profile 的 `pnpm-workspace.yaml` 后重新 `add` 即可。下面是一份示例。
+git 安装会运行包的 `prepare` 脚本重新构建 `lib/`。pnpm 10 及更新版本默认拒绝这类构建，因此第一次 `add` 可能失败。把 pnpm 打印的包键原样复制进 profile 的 `pnpm-workspace.yaml`，再执行一次 `add`。
 
 ```yaml
 allowBuilds:
   '@dsh-external/dsh-session-recap': true
 ```
 
-请把这项授权视为「允许该包代码在安装时于你的机器上执行」；担心后续推送改变构建内容时，锁定 commit（`github:DDDFXYqiming/dsh-session-recap#<sha>`）。
+这项授权允许包在安装时于你的机器上执行代码。仓库内容可能变化时，锁定提交（`github:DDDFXYqiming/dsh-session-recap#<sha>`）。用 `pnpm pack` 打出的 tarball 可以直接安装，不触发构建。
 
-插件自带 `cordis.patch.yml`，安装后会自动加入 `dsh-session-recap` bundle 条目。首次安装后重启 Web profile，再刷新页面。
+从本地源码安装时先构建，再把 `add` 指向目录。
 
-从源码构建、测试与上游结构核对的完整命令见 [开发与验证](docs/development.md)。
+```bash
+git clone https://github.com/DDDFXYqiming/dsh-session-recap.git
+cd dsh-session-recap
+npm install && npm run build
+dsh plugin --profile web add .
+```
 
+重启 profile，然后刷新页面。运行需要 Node.js `^22.19.0 || >=24.0.0`。
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+回到会话时，输入框上方的回顾卡片显示当前任务、最重要的进展和下一步。点 × 关闭。会话推进后卡片消失，每个会话只保留当前一份回顾。
+
+自动回顾需要两个条件。会话处于离开状态，也就是该会话没有任何 Web 客户端持有活动租约；每个客户端每 20 秒续一次心跳，租约时长 45 秒。最后一个完成的回合距今至少 `idleMs`，并且会话至少完成过 `minTurns` 个回合。开始新回合会取消正在进行的生成，并清掉上一份回顾。
+
+随时生成回顾，用斜杠菜单里的 `/recap`。没有 Web 客户端的 profile 把 `hostCommand` 设为 `true`，由宿主命令直接返回回顾正文，不经过卡片。
+
+回顾使用你自己写句子的语言，粘贴的日志和引用材料不算你的语言。
+
+-----
+
+<a id="configure"></a>
 ## 配置
 
-bundle 安装提供默认条目；需要覆盖配置时，在 profile 的 `cordis.patch.yml` 中使用下面的裸条目。
+组合包的默认条目不需要配置。要改值，在 profile 的 `cordis.patch.yml` 里给 `dsh-session-recap` 加一条覆盖条目。没有设置的键取下面的 schema 默认值。
 
 ```yaml
 - id: dsh-session-recap
   config:
-    enabled: true        # 只控制自动回顾；/recap 始终可用
-    hostCommand: false   # Web 保持 false；无浏览器 profile 可设为 true
-    idleMs: 180000       # 最后一个完成 turn 到自动回顾的最短时间（毫秒）
-    minTurns: 3          # 自动回顾所需的最少完成轮数
-    recentMessages: 80   # 进入回顾窗口的最近会话消息数（工具结果不计入）
-    maxChars: 400        # 回顾文本上限（同时是告知模型的硬预算，输出为纯文本、无 Markdown）
-    maxInputChars: 24000 # 回顾输入上限（字节）
-    maxOutputTokens: 2048 # 回顾模型的输出 token 预算（思考型模型把思考 token 也算进该预算）
-    timeoutMs: 30000
-    manualRequestTimeoutMs: 70000 # 浏览器手动 /recap 等待结果的超时（毫秒）；生成最长约 2×timeoutMs，放弃等待不影响服务端继续生成
-    provider: ''         # 留空：复用会话最近实际使用的 provider
-    model: ''            # 留空：复用会话最近实际使用的 model；固定路由时与 provider 一起填写
-    reasoningEffort: ''  # 留空：插件不传思考等级；也可填写目标适配器支持的 id
-    # temperature: 0.2   # 可选；省略时使用目标模型/适配器默认值
-    stopSequences: []    # 可选停止词列表
+    enabled: true           # 自动回顾开关。/recap 在关闭后仍可用。
+    hostCommand: false      # 注册宿主 /recap 命令。没有 Web 客户端时才设为 true。
+    idleMs: 180000          # 最后一个完成回合的最短等待时间（毫秒）。
+    minTurns: 3             # 自动回顾所需的最少完成回合数。
+    recentMessages: 80      # 进入回顾窗口的最近消息条数。
+    maxChars: 400           # 回顾正文的字符上限。
+    maxInputChars: 24000    # 发给模型的输入字节上限。
+    maxOutputTokens: 2048   # 单次回顾请求的输出 token 预算。
+    timeoutMs: 30000        # 单次回顾请求的超时时间（毫秒）。
+    manualRequestTimeoutMs: 70000  # 浏览器等待手动 /recap 结果的时限（毫秒）。
+    provider: ''            # 固定 provider，与 model 一起填写。
+    model: ''               # 固定 model，与 provider 一起填写。
+    reasoningEffort: ''     # 适配器的思考等级 id，留空表示不传。
+    # temperature: 0.2      # 可选采样温度，省略时用适配器默认值。
+    stopSequences: []       # 可选停止词。
+    routeProbe: false       # 把路由判定写入 route-probe.log。
 ```
 
-`provider` 与 `model` 必须成对填写；同时留空时，自动回顾和 `/recap` 都复用会话最新 `request/context` 中的实际路由，回顾默认跟着会话真正在用的模型走，不需要单独为它指定路由。默认不会继承或传递会话的 `reasoningEffort`，目标模型适配器仍可应用自己的默认值。回顾路由若跟着思考型会话模型走，思考 token 会占用 `maxOutputTokens` 预算。预算耗尽时，只要已有至少一个完整句子就直接交付；完全没有完整正文才按 4 倍预算（上限 4096）重试一次。上述覆盖项与输入/输出边界、超时设置同时适用于自动和手动回顾。
+`provider` 与 `model` 成对生效。两者都留空时，复用会话最近一次请求记录里的 provider 与 model。回顾路由使用思考型模型时，思考 token 也占用 `maxOutputTokens`；第一次尝试没有完整句子时，插件按 `min(4096, max(2048, maxOutputTokens × 4))` 的预算再试一次。`manualRequestTimeoutMs` 只限制浏览器等待手动请求的时间，生成在宿主继续，后续轮询会把卡片更新出来。
 
-`hostCommand` 决定 `/recap` 的唯一所有者。Web profile 保持默认值，由客户端贡献完整菜单样式；只有不加载 Web 客户端的 profile 才设为 `true`，由宿主命令在终端或其他命令面直接返回正文。同一 profile 不要同时启用两种所有者。
+profile 的 patch 会替换该行的整个 `config`。没有设置的键取 schema 默认值，只写要改的键就够了。
 
-## 存储布局
+-----
 
-```text
-<home>/.dsh/plugin-data/dsh-session-recap/
-└── <encoded-session-id>.json
-```
+<a id="understand-the-implementation"></a>
+## 理解实现
 
-sidecar 只保存当前会话的回顾文本、生成时间和完成轮次锚点。DSH 的 session log 是 append-only 的，插件不改它的事件词汇，也不往里写自定义事件。旧回顾会被清理。会话前进后，每个会话留下的始终是当前那一份回顾。
+<details>
+<summary>机制说明，点击展开</summary>
 
-## 安全边界
+宿主侧的代码用会话投影跟踪回合边界，并为每个会话维护客户端在线状态表。每个 Web 客户端带上客户端 id 和递增序号上报 `active` 或 `away`，宿主在 45 秒后让活动租约过期。只有没有任何客户端持有活动租约时，会话才算离开。自动生成在完成的 `turn/end` 之后挂一个定时器，到点时重新检查同一组条件，同一个会话只允许一个在途请求。开始新回合会中止该请求并清掉已存的回顾。
 
-`/api/dsh-session-recap` route 仅接受 loopback 连接，判定口径与 DSH 自己的 `/api` 信任栅栏（client-connection 的 api-request-trust）一致，另加「只服务本机」的收紧：
+输入构造保留对话内容，丢掉工具输出。帧取最近 `recentMessages` 条助手消息与真实用户输入，排除工具结果与注入上下文，把最新的压缩检查点当作可信历史，并在最新用户请求落到窗口之外时把它补进 `goal`。JSON 帧超过 `maxInputChars` 字节预算时，依次缩短最长的字符串。
 
-- 远端地址必须是回环地址（127.0.0.1 / ::1 / ::ffff:127.0.0.1）。
-- `Host` 头用锚定正则只认回环 authority，阻断 DNS rebinding；伪造 Host 的请求一律拒绝。
-- 浏览器标记按 DSH 口径：`Sec-Fetch-Site: cross-site` 一律拒绝；`Origin` 缺席放行（Host 栅栏已绑定请求，本地传输不补该头）；`Origin` 存在时必须可解析、非字面 "null"（file: / srcdoc 沙箱的不透明源），且 host 与 `Host` 头一致——协议差异不影响判定，TLS 代理终止后转发到明文端口是合法形态。
+生成过程只有一次辅助模型调用，包含一段固定系统提示词和一条 user 消息。系统提示词要求两到四句纯文本，写明 `maxChars` 硬上限，禁止 Markdown，内容依次是当前任务、一个关键进展或决定、一个下一步动作。user 消息带 JSON 帧和 `[recap-language]` 指令，指令里最多附三条最近的用户消息，让模型用用户自己写句子的语言输出。回复会清掉思考标签与 Markdown，按 `maxChars` 截断，截断落在句子中间时退回到最后一个完整句子。
 
-跨端口、跨协议的浏览器 `Origin` 与显式跨站写入不会触发生成。读取面 GET 任何能访问该本机端口、且通过上述校验的本地进程都可读取指定会话的回顾正文，这与直接读取插件 sidecar 文件等价，不引入额外暴露。该 route 按既定设计免宿主鉴权，信任完全依赖上述校验；route 不触碰任何凭据，也不返回会话日志原文，响应不带 CORS 头，并带 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
+宿主保存正文并提供读取。数据文件写在 `$DSH_HOME/plugin-data/dsh-session-recap/<encoded-session-id>.json`，保存 `text`、`at` 和 `turnSeq`，先写临时文件再改名。内存里的副本由 `GET /api/dsh-session-recap?sessionId=...` 提供，Web 客户端轮询它，在 `conversation.input.dock` 槽位渲染卡片，并按会话、回合和生成时间在 `sessionStorage` 里记住关闭状态。路由接受 `GET`、`HEAD` 和用于在线状态上报或手动生成的 `POST`。
 
-判定事实会写入 sidecar 目录的 `route-probe.log`（放行请求只留前 20 条，拒绝请求全部留档），用于定位 `forbidden origin` 类报告；写日志失败不影响 route 本身。
+路由只应答本机调用。远端地址必须是回环地址，`Host` 头必须匹配锚定的回环形式，`Sec-Fetch-Site: cross-site` 一律拒绝；`Origin` 缺席放行，存在时必须能解析且 host 与 `Host` 一致。`routeProbe` 设为 `true` 时，放行与拒绝的判定写入插件数据目录的 `route-probe.log`，用于排查。
 
-## 0.1.12 更新
+</details>
 
-- 兼容 DSH 0.2.1-alpha.3，构建依赖更新至该版本。
-- 识别新版 `compact-checkpoint`，压缩后的回顾继续使用先前任务摘要，并兼容旧会话来源格式。
-- 独立源码构建时补齐会话投影依赖链接。
+-----
 
-## 0.1.11 更新
+<a id="further-exploration"></a>
+## 进一步探索
 
-- 修复 DSH 0.2 桌面壳下插件整体不可用：`/recap` 与 presence 上报被 `403 forbidden origin` 全部误杀。旧判定要求写入面 POST 携带与 `protocol//host` 逐字节相同的 `Origin`，而宿主传输不保证补写该头（浏览器保留 `Origin`，客户端无法自行补写）。判定改为与 DSH `/api` 栅栏同口径：`Host` 回环栅栏 + `Sec-Fetch-Site` 跨站拒绝 + `Origin` 缺席放行、存在则比对 host。跨站与跨端口写入仍被拒绝。
-- 新增 `route-probe.log` 路由判定探针，`forbidden origin` 报告可直接读事实定位。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，本插件接入的宿主项目。
+- [打包与安装插件](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish)，组合包 manifest、profile 配置层与 git 安装。
+- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)，同样的离开回顾在 Pi Coding Agent 上的实现。
+- [版本发布](https://github.com/DDDFXYqiming/dsh-session-recap/releases)，已发布版本与说明。
 
-## 0.1.10 更新
+-----
 
-- 支持 DSH 0.2.0-rc.1，构建依赖与持续集成同步升级。
-- 修复刷新页面时历史消息恢复导致回顾卡片自动消失的问题；只在晚于回顾锚点的新消息出现时自动收起。
-- 保留手动回顾、离开后自动回顾、关闭状态记忆和新回顾重新显示的行为，并加入 React 生命周期回归测试。
+<a id="model-experience"></a>
+## 模型体验
 
-## 兼容性
+### 回顾请求
 
-| 项目 | 版本或范围 |
-| --- | --- |
-| dsh-session-recap | `0.1.7`（`package.json`） |
-| DeepSeek Harness packages | 兼容范围 `>=0.1.6-alpha.1 <0.2.0-0 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.3`（peerDependencies）；构建依赖钉在 `0.2.1-alpha.3`（devDependencies/overrides，保证可复现构建与 git 安装解析），保留 0.1.x 的兼容声明，新增 0.2.1-alpha.3 的构建与宿主验证 |
-| Node.js | `^22.19.0 \|\| >=24.0.0`（与 DSH 当前运行时范围一致） |
-| 使用面 | 所有提供 LLM 与 session projection 服务的 DSH profile。宿主命令另需 commands；Web 卡片另需 locale、conversation、slots 和 web-server 服务 |
+#### 模型看到什么
 
-## 相关
+一次回顾调用发送一段固定系统提示词和一条 user 消息。系统提示词要求用用户的语言写两到四句纯文本，重申 `maxChars` 硬上限，禁止 Markdown 与标签式冒号分栏，内容依次是当前任务、一个关键进展或决定、一个下一步动作。user 消息带 JSON 转录帧 `{ historySummary, goal, recent }` 和 `[recap-language]` 指令，指令由最多三条最近的用户消息组成。`historySummary` 是最新的压缩检查点，`goal` 是最新真实用户请求（落在窗口之外时才有），`recent` 是带角色标注的对话条目。
 
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [pi-recap](https://github.com/DDDFXYqiming/pi-recap)，同一行为在 Pi Coding Agent TUI 上的实现
-- [GitHub Releases](https://github.com/DDDFXYqiming/dsh-session-recap/releases)
+#### Token 影响
 
-## 授权
+插件在每次自动触发或手动 `/recap` 时增加一次独立请求。转录帧按 `maxInputChars` 字节上限（默认 24000）截断，`recentMessages`（默认 80）决定进入帧的消息条数。输出按 `maxOutputTokens`（默认 2048）限制，第一次尝试没有完整句子时，按 `min(4096, max(2048, maxOutputTokens × 4))` 重试一次。回顾正文按 `maxChars`（默认 400）字符截断，只落在数据文件与内存副本里，会话的模型输入与消息历史保持原样。
 
-MIT
+#### KV Cache 影响
+
+每次回顾都是一次独立的单轮请求。转录内容随会话变化，多次回顾之间没有可复用的稳定前缀。插件只读写自己的数据文件与内存副本，会话消息与系统提示词保持原样，会话已有的请求前缀仍可复用。
+
+## 已知限制与延期工作
+
+<a id="known-limitations-and-deferred-work"></a>
+
+- **自动回顾需要 Web 客户端。** 离开判定依赖客户端上报。没有 Web 客户端的 profile 只有在 `hostCommand: true` 时才能用 `/recap`，不会自行生成回顾。
+- **需要可用的模型路由。** 宿主使用显式的 `provider` 与 `model`，或会话最近一次请求记录里的路由。两者都没有时生成失败，宿主写一条警告日志。
+- **思考型路由会占用输出预算。** 思考 token 计入 `maxOutputTokens`。预算偏小时可能拿不到完整句子，唯一一次提额重试也可能失败，`/recap` 会返回错误。
+- **Teammate 与 subagent 会话保持手动。** 带父会话的会话不会自动触发回顾，只能通过 `/recap` 生成。
+- **路由只应答回环客户端。** 远端或局域网调用方即使拿到正确的会话 id，也读不到宿主路由上的回顾。
+- **关闭状态只存在当前标签页。** Web 客户端把关闭记录写进 `sessionStorage`，另一个标签页不会继承。
+
+-----
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者工作上下文，点击展开</summary>
+
+`routeProbe` 除排查外保持关闭。它在路由上同步追加日志，轮询的客户端会让每次请求都落到磁盘。`generateRecap` 里的提额系数、2048 下限和 4096 上限是固定的策略常量，不是配置项。发布前执行 `npm run build` 和 `npm test`。
+
+</details>

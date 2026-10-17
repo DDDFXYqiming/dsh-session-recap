@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-session-recap",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Session recap plugin for DeepSeek Harness (automatic away recaps)",
   "author": "DDDFXYqiming",
   "license": "MIT",
@@ -10,6 +10,7 @@
   "files": [
     "lib",
     "locale",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
@@ -47,6 +48,7 @@
     "./package.json": "./package.json"
   },
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
@@ -145,7 +147,8 @@
     "zod": "4.4.3"
   },
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0 <0.3.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
@@ -184,5 +187,6 @@
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
     "@deepseek-ai/dsh-util-crypto": "0.2.1-rc.2",
     "@deepseek-ai/dsh-util-values": "0.2.1-rc.2"
-  }
+  },
+  "icon": "./icon.svg"
 }

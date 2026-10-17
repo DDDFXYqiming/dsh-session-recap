@@ -1,0 +1,13 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M8 18a10 10 0 1 0 3.2-7.36" stroke="url(#recap-ring)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M8 9.5v5h5" stroke="#41E1AC" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M14 15.5h8.5" stroke="#658EFF" stroke-width="2" stroke-linecap="round"/>
+  <path d="M14 20h6" stroke="#658EFF" stroke-width="2" stroke-linecap="round"/>
+  <path d="M14 24.5h9.5" stroke="#41E1AC" stroke-width="2" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="recap-ring" x1="8" y1="8" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#658EFF"/>
+      <stop offset="1" stop-color="#41E1AC"/>
+    </linearGradient>
+  </defs>
+</svg>
