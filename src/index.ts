@@ -281,7 +281,6 @@ function stripMarkdown(text: string): string {
 function isCompactCheckpoint(message: Message): boolean {
   if (message.role !== 'user') return false
   const source = message.source as { kind?: unknown; plugin?: unknown }
-  // 新版使用独立的检查点来源；保留旧会话日志的来源格式。
   return source.kind === 'compact-checkpoint'
     || source.kind === 'plugin:compact'
     || (source.kind === 'plugin' && source.plugin === 'compact')
@@ -726,7 +725,6 @@ function createRouteProbe(directory: string): (req: IncomingMessage, verdict: Tr
       ].join(' | ')
       appendFileSync(join(directory, 'route-probe.log'), `${new Date().toISOString()} ${facts}\n`, 'utf8')
     } catch {
-      // 探针失败不影响路由
     }
   }
 }
