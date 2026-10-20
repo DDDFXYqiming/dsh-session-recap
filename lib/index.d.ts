@@ -32,7 +32,7 @@ export interface Config {
     enabled: boolean;
     /** Register the host `/recap` command for profiles without the Web client. */
     hostCommand: boolean;
-    /** Away window after a completed turn before auto-generating a recap (ms). */
+    /** WebUI 连续离开与最后完成回合都达到此时长后自动回顾（毫秒）。 */
     idleMs: number;
     /** Minimum completed turns before any automatic recap is generated. */
     minTurns: number;
@@ -65,7 +65,7 @@ type AppContext = Context & {
     llm: LlmService;
 };
 type ClientPresence = {
-    active: boolean;
+    state: 'active' | 'away' | 'unknown';
     sequence: number;
     expiresAt: number;
 };
@@ -117,13 +117,7 @@ declare function framedTranscriptHasContent(framed: string): boolean;
  * assistant mirrors the user). No language names, no classification in code.
  */
 declare function languageDirective(samples: readonly string[]): string;
-/**
- * 自动回顾只服务用户真正在看的交互会话。Agent Teams 开启后同一进程内会并发存在 teammate
- * 会话（`header.parentSession` 非空，与 subagent 子会话同形），它们各自发 turn/end；一旦
- * 用户在 Team 面板里打开过某个 teammate 会话，presence 就挂到该子会话 id 上，使其永久满足
- * 「离开后自动生成」的条件，每个完成回合都会多出一条隐藏的 recap LLM 调用。子会话一律不自动
- * 武装，手动 /recap 不受此限。headless 一次性会话与无 header 的旧调用形状仍算交互会话。
- */
+/** 子会话只接受手动回顾，不加入自动回顾的访问集合。 */
 export declare function isInteractiveSession(session: {
     header?: {
         parentSession?: unknown;
@@ -189,7 +183,7 @@ type TrustVerdict = {
  */
 declare function requestTrustVerdict(req: IncomingMessage): TrustVerdict;
 declare function allowedLoopbackRequest(req: IncomingMessage): boolean;
-declare function updateClientPresence(clients: Map<string, ClientPresence>, clientId: string, sequence: number, active: boolean, now: number): boolean;
+declare function updateClientPresence(clients: Map<string, ClientPresence>, clientId: string, sequence: number, state: ClientPresence['state'], now: number): boolean;
 declare function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean;
 declare function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | undefined;
 export declare function apply(ctx: AppContext, config: Config): void;

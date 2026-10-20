@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This bundle adds away recaps to a DeepSeek Harness session. When every Web client for the session is away and the last completed turn is older than `idleMs`, the host asks an auxiliary model for a short plain-text recap and stores it in a plugin sidecar. The Web client shows that recap above the composer when the user returns, with the current task, the important progress, and the next action. `/recap` also generates one on demand, and `hostCommand: true` exposes the same command to profiles that have no Web client.
+This bundle adds away recaps to a DeepSeek Harness session. When every Web client connected to the host has explicitly been away for at least `idleMs` and the last completed turn is also older than `idleMs`, the host asks an auxiliary model for a short plain-text recap and stores it in a plugin sidecar. The Web client shows that recap above the composer when the user returns, with the current task, the important progress, and the next action. `/recap` also generates one on demand, and `hostCommand: true` exposes the same command to profiles that have no Web client.
 
 ## Table of Contents
 
@@ -51,7 +51,7 @@ npm install && npm run build
 dsh plugin --profile web add .
 ```
 
-Restart the profile, then reload the page. Node.js `^22.19.0 || >=24.0.0` is required.
+Apply the update through the plugin manager, then reload the page. Restart the host if the manager requests it. Node.js `^22.19.0 || >=24.0.0` is required.
 
 -----
 
@@ -60,7 +60,9 @@ Restart the profile, then reload the page. Node.js `^22.19.0 || >=24.0.0` is req
 
 When you return to a session, a recap card above the composer shows the current task, the most important progress point, and the next action. The × button closes it. The card disappears when the session advances, and a session keeps one current recap.
 
-Automatic generation needs two conditions. The session must be away, which means no Web client for that session holds an active lease; each client renews a 45-second lease with a heartbeat every 20 seconds. The last completed turn must be at least `idleMs` old, and the session must have at least `minTurns` completed turns. Starting a new turn cancels a pending generation and clears the previous recap.
+Automatic recaps cover interactive sessions you have visited. Every WebUI page must explicitly remain away for at least `idleMs`; the last completed turn must also be at least `idleMs` old, and the session must have at least `minTurns` completed turns. Focusing any WebUI page cancels scheduled and in-flight automatic recaps across all sessions. Switching sessions within the focused application keeps it active. Starting a new turn cancels that session's generation and clears its previous recap.
+
+Clients send a heartbeat every 20 seconds. An active client whose 45-second lease expires becomes unknown, and automatic recaps pause until that client reports an explicit state again.
 
 To generate a recap at any time, run `/recap` from the slash menu. Profiles without a Web client set `hostCommand: true` and receive the recap text from the host command instead of the card.
 
@@ -78,7 +80,7 @@ The bundle default row needs no configuration. To change a value, add an entry f
   config:
     enabled: true           # Automatic recaps. /recap stays available when false.
     hostCommand: false      # Register the host /recap command. Set true only without a Web client.
-    idleMs: 180000          # Minimum age of the last completed turn, in milliseconds.
+    idleMs: 180000          # Required continuous app-away time and completed-turn age, in milliseconds.
     minTurns: 3             # Completed turns required before an automatic recap.
     recentMessages: 80      # Recent conversation messages used for the recap.
     maxChars: 400           # Hard cap on the recap text, in characters.
@@ -106,7 +108,7 @@ A profile patch replaces the whole config for the row. Keys you omit take their 
 <details>
 <summary>Mechanics — click to expand</summary>
 
-The host half tracks turn boundaries through a session projection and keeps a presence map per session. Every Web client reports `active` or `away` with a client id and an increasing sequence, and the host expires an active lease after 45 seconds. A session is away only when no client holds an active lease. Automatic generation arms a timer after a completed `turn/end`, checks the same conditions again when the timer fires, and allows one in-flight request per session. Starting a turn aborts that request and clears the stored recap.
+The host tracks turn boundaries through a session projection and owns app-wide client presence and continuous away time. Any active or unknown client pauses automatic generation. Automatic calls check the same away period before starting and before publishing; manual calls remain independent of focus changes. See [development notes](docs/development.md) for implementation details.
 
 Input framing keeps the conversation and drops tool output. The frame takes the last `recentMessages` messages from the assistant and from real user input, drops tool results and injected context, uses the newest compaction checkpoint as trusted history, and adds the newest user request as `goal` when it has fallen outside the window. The JSON frame is trimmed to the `maxInputChars` byte budget by shortening its longest strings.
 

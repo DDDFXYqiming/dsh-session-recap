@@ -45,7 +45,7 @@ export interface Config {
   enabled: boolean
   /** Register the host `/recap` command for profiles without the Web client. */
   hostCommand: boolean
-  /** Away window after a completed turn before auto-generating a recap (ms). */
+  /** WebUI 连续离开与最后完成回合都达到此时长后自动回顾（毫秒）。 */
   idleMs: number
   /** Minimum completed turns before any automatic recap is generated. */
   minTurns: number
@@ -103,7 +103,7 @@ const RECAP_ROUTE = '/api/dsh-session-recap'
 /** Maximum accepted size of one sidecar snapshot. */
 const MAX_STORED_RECAP_CHARS = 2000
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
-/** Active clients renew this lease; an expired page can no longer hold a Session active. */
+/** active 需要续租；过期只说明失联，不能据此确认用户离开。 */
 const PRESENCE_LEASE_MS = 45000
 
 type AppContext = Context & {
@@ -121,9 +121,14 @@ type RecapStore = {
 }
 
 type ClientPresence = {
-  active: boolean
+  state: 'active' | 'away' | 'unknown'
   sequence: number
   expiresAt: number
+}
+
+type RecapCall = {
+  controller: AbortController
+  mode: 'automatic' | 'manual'
 }
 
 type RecapFrame = {
@@ -376,13 +381,7 @@ function languageDirective(samples: readonly string[]): string {
     + 'Write the ENTIRE recap in that language, regardless of the language of any code, log, or this directive.'
 }
 
-/**
- * 自动回顾只服务用户真正在看的交互会话。Agent Teams 开启后同一进程内会并发存在 teammate
- * 会话（`header.parentSession` 非空，与 subagent 子会话同形），它们各自发 turn/end；一旦
- * 用户在 Team 面板里打开过某个 teammate 会话，presence 就挂到该子会话 id 上，使其永久满足
- * 「离开后自动生成」的条件，每个完成回合都会多出一条隐藏的 recap LLM 调用。子会话一律不自动
- * 武装，手动 /recap 不受此限。headless 一次性会话与无 header 的旧调用形状仍算交互会话。
- */
+/** 子会话只接受手动回顾，不加入自动回顾的访问集合。 */
 export function isInteractiveSession(session: { header?: { parentSession?: unknown } }): boolean {
   return session.header?.parentSession === undefined
 }
@@ -732,7 +731,7 @@ function createRouteProbe(directory: string): (req: IncomingMessage, verdict: Tr
 function mountWebRoute(
   webCtx: WebContext,
   store: RecapStore,
-  setPresence: (session: Session, clientId: string, sequence: number, active: boolean) => void,
+  setPresence: (session: Session | undefined, clientId: string, sequence: number, state: ClientPresence['state']) => void,
   generate: (session: Session, signal: AbortSignal) => Promise<CommandResult>,
   config: Config,
 ): void {
@@ -753,20 +752,18 @@ function mountWebRoute(
         if (!trust.ok) return sendJson(res, 403, { error: 'forbidden origin' })
         const url = new URL(req.url ?? RECAP_ROUTE, 'http://localhost')
         const rawSessionId = url.searchParams.get('sessionId')
-        if (rawSessionId === null || rawSessionId === '') {
+        const manual = method === 'POST' && url.searchParams.get('action') === 'generate'
+        if ((method !== 'POST' || manual) && !rawSessionId) {
           return sendJson(res, 400, { error: 'sessionId is required' })
         }
-        if (rawSessionId.length > 256) {
+        if (rawSessionId !== null && rawSessionId.length > 256) {
           return sendJson(res, 400, { error: 'sessionId is invalid' })
         }
-        const session = webCtx.sessions.get(rawSessionId as Session['id'])
+        const session = rawSessionId ? webCtx.sessions.get(rawSessionId as Session['id']) : undefined
         if (method === 'POST') {
-          if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
-          // The Web client owns the styled slash row; this route is the host
-          // action it calls. A fresh signal (never aborted by the request
-          // socket) keeps a manual recap alive when the tab navigates away —
-          // the card is picked up by the next poll.
-          if (url.searchParams.get('action') === 'generate') {
+          if (manual) {
+            if (session === undefined) return sendJson(res, 404, { error: 'session not found' })
+            // 手动请求在页面离开后继续生成，由后续轮询读取结果。
             const result = await generate(session, new AbortController().signal)
             if (result.kind === 'success') return sendJson(res, 200, { ok: true })
             return sendJson(res, 409, { error: result.text })
@@ -783,7 +780,10 @@ function mountWebRoute(
           if (!Number.isSafeInteger(sequence) || sequence < 0) {
             return sendJson(res, 400, { error: 'seq must be a non-negative integer' })
           }
-          setPresence(session, clientId, sequence, presence === 'active')
+          if (url.searchParams.get('scope') !== 'app') {
+            return sendJson(res, 409, { error: 'Refresh the WebUI to report app-wide presence' })
+          }
+          setPresence(session, clientId, sequence, presence)
           res.writeHead(204, { 'Cache-Control': 'no-store' })
           res.end()
           return
@@ -810,57 +810,58 @@ function mountWebRoute(
 
 function beginCall(
   sessionId: string,
+  mode: RecapCall['mode'],
   activeCalls: Set<AbortController>,
-  activeBySession: Map<string, AbortController>,
+  activeBySession: Map<string, RecapCall>,
 ): AbortController | undefined {
   if (activeBySession.has(sessionId)) return undefined
   const controller = new AbortController()
   activeCalls.add(controller)
-  activeBySession.set(sessionId, controller)
+  activeBySession.set(sessionId, { controller, mode })
   return controller
 }
 
-function endCall(sessionId: string, controller: AbortController, activeCalls: Set<AbortController>, activeBySession: Map<string, AbortController>): void {
+function endCall(sessionId: string, controller: AbortController, activeCalls: Set<AbortController>, activeBySession: Map<string, RecapCall>): void {
   activeCalls.delete(controller)
-  if (activeBySession.get(sessionId) === controller) activeBySession.delete(sessionId)
+  if (activeBySession.get(sessionId)?.controller === controller) activeBySession.delete(sessionId)
 }
 
-function cancelCall(sessionId: string, activeBySession: Map<string, AbortController>): void {
-  const controller = activeBySession.get(sessionId)
-  if (controller === undefined) return
-  // Release the per-session slot before aborting so a newer completed turn can
-  // start its recap even while the old provider stream is still unwinding.
+function cancelCall(sessionId: string, activeBySession: Map<string, RecapCall>): void {
+  const call = activeBySession.get(sessionId)
+  if (call === undefined) return
+  // 先释放槽位，新任务不必等待旧流退出。
   activeBySession.delete(sessionId)
-  controller.abort()
+  call.controller.abort()
 }
 
 function updateClientPresence(
   clients: Map<string, ClientPresence>,
   clientId: string,
   sequence: number,
-  active: boolean,
+  state: ClientPresence['state'],
   now: number,
 ): boolean {
   const current = clients.get(clientId)
   if (current !== undefined && sequence <= current.sequence) return false
   clients.set(clientId, {
-    active,
+    state,
     sequence,
-    expiresAt: active ? now + PRESENCE_LEASE_MS : now,
+    expiresAt: state === 'active' ? now + PRESENCE_LEASE_MS : now,
   })
   return true
 }
 
 function expireActiveClients(clients: Map<string, ClientPresence>, now: number): void {
   for (const state of clients.values()) {
-    if (state.active && state.expiresAt <= now) state.active = false
+    if (state.state === 'active' && state.expiresAt <= now) state.state = 'unknown'
   }
 }
 
 function presenceIsAway(clients: Map<string, ClientPresence>, now: number): boolean {
+  if (clients.size === 0) return false
   expireActiveClients(clients, now)
   for (const state of clients.values()) {
-    if (state.active) return false
+    if (state.state !== 'away') return false
   }
   return true
 }
@@ -868,7 +869,7 @@ function presenceIsAway(clients: Map<string, ClientPresence>, now: number): bool
 function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | undefined {
   let next: number | undefined
   for (const state of clients.values()) {
-    if (!state.active) continue
+    if (state.state !== 'active') continue
     if (next === undefined || state.expiresAt < next) next = state.expiresAt
   }
   return next
@@ -881,17 +882,20 @@ async function maybeGenerate(
   session: Session,
   store: RecapStore,
   activeCalls: Set<AbortController>,
-  activeBySession: Map<string, AbortController>,
+  activeBySession: Map<string, RecapCall>,
+  isCurrentAway: () => boolean,
 ): Promise<void> {
+  if (!isCurrentAway()) return
   const state = recapSessionState(ctx, session)
   if (state.openTurn || state.completedTurns < config.minTurns) return
   const anchor = state.lastTurnEnd
   if (anchor === null || !anchor.completed) return
   if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
-  const controller = beginCall(session.id, activeCalls, activeBySession)
+  const controller = beginCall(session.id, 'automatic', activeCalls, activeBySession)
   if (controller === undefined) return
   try {
     const text = await generateRecap(ctx, config, session, controller.signal)
+    if (controller.signal.aborted || !isCurrentAway()) return
     const nowState = recapSessionState(ctx, session)
     const nowEnd = nowState.lastTurnEnd
     if (nowState.openTurn || nowEnd === null || nowEnd.seq !== anchor.seq || !nowEnd.completed) return
@@ -910,10 +914,13 @@ async function maybeGenerate(
 export function apply(ctx: AppContext, config: Config): void {
   ctx.sessionProjections.register(recapProjectionDefinition)
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
-  const presenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  const presenceBySession = new Map<string, Map<string, ClientPresence>>()
+  const clients = new Map<string, ClientPresence>()
+  const visitedSessions = new Map<string, Session>()
+  let presenceTimer: ReturnType<typeof setTimeout> | undefined
+  let awaySince: number | undefined
+  let awayEpoch = 0
   const activeCalls = new Set<AbortController>()
-  const activeBySession = new Map<string, AbortController>()
+  const activeBySession = new Map<string, RecapCall>()
   const store: RecapStore = {
     directory: dshHomePath('plugin-data', 'dsh-session-recap'),
     values: new Map(),
@@ -925,15 +932,13 @@ export function apply(ctx: AppContext, config: Config): void {
     timers.delete(sessionId)
   }
 
-  function clearPresenceTimer(sessionId: string): void {
-    const timer = presenceTimers.get(sessionId)
-    if (timer !== undefined) clearTimeout(timer)
-    presenceTimers.delete(sessionId)
+  function clearPresenceTimer(): void {
+    if (presenceTimer !== undefined) clearTimeout(presenceTimer)
+    presenceTimer = undefined
   }
 
-  function sessionIsAway(sessionId: string): boolean {
-    const clients = presenceBySession.get(sessionId)
-    return clients !== undefined && presenceIsAway(clients, Date.now())
+  function isAwayEpoch(epoch: number): boolean {
+    return awaySince !== undefined && awayEpoch === epoch && presenceIsAway(clients, Date.now())
   }
 
   function clearRecap(sessionId: string): void {
@@ -943,55 +948,51 @@ export function apply(ctx: AppContext, config: Config): void {
 
   function armAutomatic(session: Session): void {
     clearTimer(session.id)
-    // [0.1.8] Agent Teams 开启后，同一进程内会并发存在 teammate 会话（parentSession 非空），
-    // 它们各自发 turn/end。用户在 Team 面板「打开 teammate 会话」时主视图换成该子会话，
-    // 本插件的 presence 随之上报到子会话 id 上——此后该 teammate 每个 completed turn 都会
-    // 在一次「离开」后触发一条隐藏的 recap LLM 调用并按子会话 id 落盘。自动回顾的对象应是
-    // 用户真正在看的交互会话，故子会话一律不自动武装；手动 /recap 不受此闸约束。
-    if (!isInteractiveSession(session)) return
-    if (!config.enabled || !sessionIsAway(session.id)) return
+    if (!visitedSessions.has(session.id) || !config.enabled || awaySince === undefined) return
+    const epoch = awayEpoch
+    if (!isAwayEpoch(epoch)) return
     const state = recapSessionState(ctx, session)
     if (state.openTurn || state.completedTurns < config.minTurns) return
     const anchor = state.lastTurnEnd
     if (anchor === null || !anchor.completed) return
     if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
-    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, anchor.time + config.idleMs - Date.now()))
+    const dueAt = Math.max(anchor.time, awaySince) + config.idleMs
+    const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, dueAt - Date.now()))
     const timer = setTimeout(() => {
       timers.delete(session.id)
-      if (!sessionIsAway(session.id)) return
-      void maybeGenerate(ctx, config, session, store, activeCalls, activeBySession)
+      void maybeGenerate(ctx, config, session, store, activeCalls, activeBySession, () => isAwayEpoch(epoch))
     }, delay)
     timers.set(session.id, timer)
   }
 
-  function syncPresence(session: Session): void {
-    clearPresenceTimer(session.id)
-    const clients = presenceBySession.get(session.id)
-    if (clients === undefined) return
+  function syncPresence(): void {
+    clearPresenceTimer()
     const now = Date.now()
-    if (presenceIsAway(clients, now)) armAutomatic(session)
-    else clearTimer(session.id)
+    if (presenceIsAway(clients, now)) {
+      if (awaySince === undefined) {
+        awaySince = now
+        awayEpoch += 1
+      }
+      for (const session of visitedSessions.values()) armAutomatic(session)
+    } else {
+      awaySince = undefined
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+      for (const [sessionId, call] of activeBySession) {
+        if (call.mode === 'automatic') cancelCall(sessionId, activeBySession)
+      }
+    }
     const expiresAt = nextPresenceExpiry(clients)
     if (expiresAt === undefined) return
-    const timer = setTimeout(() => {
-      presenceTimers.delete(session.id)
-      syncPresence(session)
-    }, Math.min(MAX_TIMER_DELAY_MS, Math.max(0, expiresAt - now)))
-    presenceTimers.set(session.id, timer)
+    presenceTimer = setTimeout(syncPresence, Math.min(MAX_TIMER_DELAY_MS, Math.max(0, expiresAt - now)))
   }
 
-  function setPresence(session: Session, clientId: string, sequence: number, active: boolean): void {
-    let clients = presenceBySession.get(session.id)
-    if (clients === undefined) {
-      clients = new Map()
-      presenceBySession.set(session.id, clients)
-    }
-    if (!updateClientPresence(clients, clientId, sequence, active, Date.now())) return
-    syncPresence(session)
+  function setPresence(session: Session | undefined, clientId: string, sequence: number, state: ClientPresence['state']): void {
+    if (!updateClientPresence(clients, clientId, sequence, state, Date.now())) return
+    if (session !== undefined && isInteractiveSession(session)) visitedSessions.set(session.id, session)
+    syncPresence()
   }
 
-  // Automatic recaps require interactive Web presence. Headless profiles can
-  // opt into a host command, whose text result is their delivery surface.
   ctx.inject(['webServer', 'sessions'], (webCtx) => {
     mountWebRoute(webCtx as WebContext, store, setPresence, generateManual, config)
   })
@@ -1021,8 +1022,7 @@ export function apply(ctx: AppContext, config: Config): void {
 
   ctx.on('session/disposed', (session) => {
     clearTimer(session.id)
-    clearPresenceTimer(session.id)
-    presenceBySession.delete(session.id)
+    visitedSessions.delete(session.id)
     cancelCall(session.id, activeBySession)
     store.values.delete(session.id)
   })
@@ -1030,25 +1030,23 @@ export function apply(ctx: AppContext, config: Config): void {
   ctx.effect(() => () => {
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
-    for (const timer of presenceTimers.values()) clearTimeout(timer)
-    presenceTimers.clear()
-    presenceBySession.clear()
+    clearPresenceTimer()
+    clients.clear()
+    visitedSessions.clear()
+    awaySince = undefined
     for (const controller of activeCalls) controller.abort()
     activeCalls.clear()
     activeBySession.clear()
     store.values.clear()
   })
 
-  // Manual `/recap` publishes through the same sidecar-backed card as automatic
-  // recaps. It runs from the optional host command (non-interactive profiles)
-  // or from the Web client action; both share one body and one call slot.
   async function generateManual(session: Session, signal: AbortSignal): Promise<CommandResult> {
     const invokedState = recapSessionState(ctx, session)
     if (invokedState.openTurn) {
       return { kind: 'error', text: 'Recap failed: wait until the current turn finishes, then run /recap again' }
     }
     const invoked = invokedState.lastTurnEnd
-    const controller = beginCall(session.id, activeCalls, activeBySession)
+    const controller = beginCall(session.id, 'manual', activeCalls, activeBySession)
     if (controller === undefined) {
       return { kind: 'error', text: 'Recap failed: another recap is already generating' }
     }

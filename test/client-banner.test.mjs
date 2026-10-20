@@ -12,18 +12,24 @@ function loadPlugin(dismissed, state) {
   let slot
   const listeners = { window: {}, document: {} }
   const on = (scope) => (type, fn) => { (listeners[scope][type] ??= []).push(fn) }
+  const off = (scope) => (type, fn) => { listeners[scope][type] = (listeners[scope][type] ?? []).filter(value => value !== fn) }
+  const disposers = []
+  const requests = []
   const sandbox = {
     window: {
       __ModuleLoader__: { load(value) { bundle = value } },
       sessionStorage: { getItem: key => dismissed.get(key) ?? null, setItem: (key, value) => dismissed.set(key, value) },
-      addEventListener: on('window'), removeEventListener() {},
+      addEventListener: on('window'), removeEventListener: off('window'),
     },
     document: {
       hidden: false, hasFocus: () => true,
       querySelector: () => ({ dataset: {}, style: {} }),
-      addEventListener: on('document'), removeEventListener() {},
+      addEventListener: on('document'), removeEventListener: off('document'),
     },
-    fetch: async () => ({ ok: true, json: async () => state.body }),
+    fetch: async (url, options) => {
+      requests.push({ url: new URL(url, 'http://localhost'), options })
+      return { ok: true, json: async () => state.body }
+    },
     setTimeout, clearTimeout, setInterval, clearInterval, AbortController, AbortSignal,
   }
   vm.runInNewContext(readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'), sandbox)
@@ -33,7 +39,7 @@ function loadPlugin(dismissed, state) {
     throw new Error(name)
   })
   plugin.apply({
-    effect: setup => setup(),
+    effect: setup => { const dispose = setup(); if (dispose) disposers.push(dispose) },
     locale: { register: () => () => {}, bind: () => key => key },
     inject() {},
     slots: { inject(_name, setup) { setup() }, register(_spec, render) { slot = render; return () => {} } },
@@ -46,14 +52,14 @@ function loadPlugin(dismissed, state) {
       await new Promise(resolve => setTimeout(resolve, 30))
     })
   }
-  return { slot, fire }
+  return { slot, fire, requests, document: sandbox.document, listeners, dispose: () => disposers.reverse().forEach(fn => fn()) }
 }
 
 test('卡片只认路由响应，宿主未提供新鲜度字段时照常显示', async () => {
   const dismissed = new Map()
   const recap = { text: '已完成文件验证。', turnSeq: 10, at: 123456 }
   const state = { body: { recap, turnSeq: 10, turnOpen: false } }
-  const { slot, fire } = loadPlugin(dismissed, state)
+  const { slot, fire, dispose } = loadPlugin(dismissed, state)
   const props = { sessionId: 'refresh-fixture' }
   let renderer
   const render = async () => {
@@ -86,6 +92,7 @@ test('卡片只认路由响应，宿主未提供新鲜度字段时照常显示',
     assert.equal(notes(), 0, '关闭按钮保持有效')
   } finally {
     if (renderer) await act(async () => renderer.unmount())
+    dispose()
   }
 })
 
@@ -93,7 +100,7 @@ test('关闭按钮的结果在重新挂载后保持', async () => {
   const dismissed = new Map()
   const recap = { text: '已完成文件验证。', turnSeq: 10, at: 123456 }
   const state = { body: { recap, turnSeq: 10, turnOpen: false } }
-  const { slot, fire } = loadPlugin(dismissed, state)
+  const { slot, fire, dispose } = loadPlugin(dismissed, state)
   const props = { sessionId: 'remount-fixture' }
   let renderer
   const render = async () => {
@@ -114,7 +121,45 @@ test('关闭按钮的结果在重新挂载后保持', async () => {
     assert.equal(renderer.root.findAllByProps({ role: 'note' }).length, 0, '手动关闭结果在重新挂载后保持')
   } finally {
     if (renderer) await act(async () => renderer.unmount())
+    dispose()
   }
+})
+
+test('全局焦点覆盖会话切换、组件卸载和无会话页面', async () => {
+  const plugin = loadPlugin(new Map(), { body: { recap: null } })
+  const presence = () => plugin.requests.filter(item => item.url.searchParams.has('presence'))
+  let renderer
+  try {
+    assert.equal(presence()[0].url.searchParams.get('scope'), 'app')
+    assert.equal(presence()[0].url.searchParams.has('sessionId'), false)
+    await act(async () => { renderer = create(plugin.slot({ sessionId: 'first' })) })
+    await act(async () => { renderer.update(plugin.slot({ sessionId: 'second' })) })
+    assert.equal(presence().at(-1).url.searchParams.get('sessionId'), 'second')
+    assert.ok(presence().every(item => item.url.searchParams.get('presence') === 'active'))
+    const beforeUnmount = presence().length
+    await act(async () => renderer.unmount())
+    renderer = null
+    assert.equal(presence().length, beforeUnmount, '会话组件卸载不代表离开应用')
+    plugin.document.hasFocus = () => false
+    await plugin.fire('window', 'blur')
+    assert.equal(presence().at(-1).url.searchParams.get('presence'), 'away')
+    assert.equal(presence().at(-1).url.searchParams.has('sessionId'), false)
+    plugin.document.hasFocus = () => true
+    await plugin.fire('window', 'focus')
+    assert.equal(presence().at(-1).url.searchParams.get('presence'), 'active')
+    await plugin.fire('window', 'pagehide')
+    assert.equal(presence().at(-1).url.searchParams.get('presence'), 'away')
+    await plugin.fire('window', 'pageshow')
+    assert.equal(presence().at(-1).url.searchParams.get('presence'), 'active')
+    assert.equal(new Set(presence().map(item => item.url.searchParams.get('clientId'))).size, 1)
+    const sequences = presence().map(item => Number(item.url.searchParams.get('seq')))
+    assert.ok(sequences.every((value, index) => index === 0 || value > sequences[index - 1]))
+  } finally {
+    if (renderer) await act(async () => renderer.unmount())
+    plugin.dispose()
+  }
+  assert.equal(Object.values(plugin.listeners.window).flat().length, 0)
+  assert.equal(Object.values(plugin.listeners.document).flat().length, 0)
 })
 
 test('客户端不再订阅 useSession/useConversation', () => {

@@ -47,7 +47,7 @@ const mount = (module, posted) => {
   const dictionaries = {}
   const contrib = {}
   const ctx = {
-    effect(setup) { setup() },
+    effect(setup, label) { if (label !== 'dsh-session-recap: app presence') setup() },
     locale: {
       register(namespace, values) { dictionaries[namespace] = values; return () => {} },
       bind() { return (key) => key },

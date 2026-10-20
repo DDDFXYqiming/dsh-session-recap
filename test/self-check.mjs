@@ -173,18 +173,24 @@ check('same-origin validation mirrors the DSH /api trust fence on loopback', () 
   assert.equal(allowedLoopbackRequest(request('http://localhost:5173')), false)
 })
 
-check('presence is aggregated per client and ignores stale events', () => {
+check('全局 presence 聚合各客户端，失联和旧序号不会确认离开', () => {
   const clients = new Map()
   const now = 1000
-  assert.equal(updateClientPresence(clients, 'tab-a', 1, true, now), true)
-  assert.equal(updateClientPresence(clients, 'tab-b', 1, true, now), true)
-  assert.equal(updateClientPresence(clients, 'tab-b', 2, false, now + 1), true)
-  assert.equal(presenceIsAway(clients, now + 2), false, 'tab A keeps the Session active')
-  assert.equal(updateClientPresence(clients, 'tab-a', 0, false, now + 3), false, 'stale cleanup is ignored')
+  assert.equal(presenceIsAway(clients, now), false, '空集合不代表用户已离开')
+  assert.equal(updateClientPresence(clients, 'tab-a', 1, 'active', now), true)
+  assert.equal(updateClientPresence(clients, 'tab-b', 1, 'active', now), true)
+  assert.equal(updateClientPresence(clients, 'tab-b', 2, 'away', now + 1), true)
+  assert.equal(presenceIsAway(clients, now + 2), false, '任意活跃标签保护整个 WebUI')
+  assert.equal(updateClientPresence(clients, 'tab-a', 0, 'away', now + 3), false)
+  assert.equal(updateClientPresence(clients, 'tab-a', 1, 'away', now + 3), false)
   assert.equal(presenceIsAway(clients, now + 4), false)
   const expiresAt = nextPresenceExpiry(clients)
-  assert.equal(typeof expiresAt, 'number')
-  assert.equal(presenceIsAway(clients, expiresAt), true, 'lost active client expires by lease')
+  assert.equal(expiresAt, now + 45000)
+  assert.equal(presenceIsAway(clients, expiresAt), false, '租约失联保持阻断')
+  assert.equal(clients.get('tab-a').state, 'unknown')
+  assert.equal(nextPresenceExpiry(clients), undefined)
+  assert.equal(updateClientPresence(clients, 'tab-a', 2, 'away', expiresAt + 1), true)
+  assert.equal(presenceIsAway(clients, expiresAt + 1), true, '所有客户端显式离开后放行')
 })
 
 check('transcript keeps only real human input as user entries', () => {

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session recap",
-    "description": "Generates a short recap when the window loses focus or you switch sessions, shown above the composer on return."
+    "description": "Generates a short recap after you have been away from the entire WebUI, shown above the composer on return."
   }
 }
