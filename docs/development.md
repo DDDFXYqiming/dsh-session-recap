@@ -40,7 +40,7 @@ DSH 桌面壳把应用挂在自定义协议 `dsh-app://app/` 下，页面 fetch 
 
 在线心跳由插件的页面级 effect 管理，每 20 秒发送一次；会话组件只登记当前访问的会话，切换或卸载组件保留应用焦点状态。POST 带 `scope=app`、`clientId`、递增 `seq` 和 `presence=active|away`，`sessionId` 可选。`pagehide` 上报离开，`pageshow` 重新同步。
 
-宿主按客户端聚合整个 WebUI 的状态。活动租约超过 45 秒后记为 `unknown`；所有已知客户端都明确 `away` 才开始记录连续离开时间，重复心跳保留计时起点。自动回顾的到期时间为 `max(lastTurnEnd.time, awaySince) + idleMs`。重新聚焦或状态转为未知时，清除所有自动定时器并取消在途自动任务；发布前再次核对离开 epoch 与取消信号。手动任务与自动任务共用每会话调用槽，通过 `mode` 区分取消范围。
+宿主按客户端聚合整个 WebUI 的状态。活动租约超过 45 秒后记为 `unknown`；所有已知客户端都明确 `away` 才开始记录连续离开时间，重复心跳保留计时起点。自动回顾要求完成回合数达到 `minTurns`，真实用户与助手正文的非空白字符数达到 `minConversationChars`，工具结果与注入内容不计入。到期时间为 `max(lastTurnEnd.time, awaySince) + idleMs`。重新聚焦或状态转为未知时，清除所有自动定时器并取消在途自动任务；发布前再次核对离开 epoch、取消信号、回合锚点与正文字符数。手动任务与自动任务共用每会话调用槽，通过 `mode` 区分取消范围。
 
 升级后刷新 WebUI，让页面使用应用级心跳协议。旧协议请求返回更新提示，待新页面上报后启用自动调度。
 

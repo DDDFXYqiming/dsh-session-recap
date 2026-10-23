@@ -49,6 +49,8 @@ export interface Config {
   idleMs: number
   /** Minimum completed turns before any automatic recap is generated. */
   minTurns: number
+  /** Minimum non-whitespace characters in real user/assistant text before any automatic recap. */
+  minConversationChars: number
   /** How many recent conversation messages (tool results excluded) feed the recap window. */
   recentMessages: number
   /** Hard cap on the recap text length (characters). */
@@ -81,7 +83,8 @@ export const Config: z<Config> = z.object({
   enabled: z.boolean().default(true),
   hostCommand: z.boolean().default(false).description('Register the host /recap command. Enable for headless profiles; leave false when the Web client owns the styled row.'),
   idleMs: z.number().step(1).min(1000).max(MAX_TIMER_DELAY_MS).default(180000),
-  minTurns: z.number().step(1).min(1).max(1000).default(3),
+  minTurns: z.number().step(1).min(1).max(1000).default(5),
+  minConversationChars: z.number().step(1).min(1).max(1000000).default(1000),
   recentMessages: z.number().step(1).min(1).max(200).default(80),
   maxChars: z.number().step(1).min(80).max(2000).default(DEFAULT_MAX_CHARS).description('Hard cap on the recap text length (characters); also the hard character budget stated to the model.'),
   maxInputChars: z.number().step(1).min(1000).max(200000).default(24000),
@@ -283,6 +286,18 @@ function stripMarkdown(text: string): string {
  * fallen out of the recent window: by the time the opening request leaves the
  * window it describes work that is long finished.
  */
+function isConversationMessage(message: Message): boolean {
+  return message.role === 'assistant' || (message.role === 'user' && message.source.kind === 'user')
+}
+
+function conversationChars(messages: readonly Message[]): number {
+  let total = 0
+  for (const message of messages) {
+    if (isConversationMessage(message)) total += stripThink(contentText(message.content)).replace(/\s+/g, '').length
+  }
+  return total
+}
+
 function isCompactCheckpoint(message: Message): boolean {
   if (message.role !== 'user') return false
   const source = message.source as { kind?: unknown; plugin?: unknown }
@@ -297,9 +312,7 @@ function frameTranscript(messages: readonly Message[], recentMessages: number, m
   // context (runtime snapshots, skill catalog, agent instructions), subagent
   // reports, plugin notices, and tool echoes all arrive under role 'user'
   // with other source kinds and would poison the language and intent signal.
-  const conversation = messages.filter((message) =>
-    message.role === 'assistant' || (message.role === 'user' && message.source.kind === 'user'),
-  )
+  const conversation = messages.filter(isConversationMessage)
   let historySummary = ''
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -875,6 +888,14 @@ function nextPresenceExpiry(clients: Map<string, ClientPresence>): number | unde
   return next
 }
 
+function automaticAnchor(ctx: AppContext, config: Config, session: Session): RecapSessionState['lastTurnEnd'] {
+  const state = recapSessionState(ctx, session)
+  if (state.openTurn || state.completedTurns < config.minTurns) return null
+  if (conversationChars(session.deriveMessages()) < config.minConversationChars) return null
+  const anchor = state.lastTurnEnd
+  return anchor !== null && anchor.completed ? anchor : null
+}
+
 /** Generate (if conditions hold) and publish a sidecar recap. */
 async function maybeGenerate(
   ctx: AppContext,
@@ -886,19 +907,15 @@ async function maybeGenerate(
   isCurrentAway: () => boolean,
 ): Promise<void> {
   if (!isCurrentAway()) return
-  const state = recapSessionState(ctx, session)
-  if (state.openTurn || state.completedTurns < config.minTurns) return
-  const anchor = state.lastTurnEnd
-  if (anchor === null || !anchor.completed) return
-  if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
+  const anchor = automaticAnchor(ctx, config, session)
+  if (anchor === null || currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
   const controller = beginCall(session.id, 'automatic', activeCalls, activeBySession)
   if (controller === undefined) return
   try {
     const text = await generateRecap(ctx, config, session, controller.signal)
     if (controller.signal.aborted || !isCurrentAway()) return
-    const nowState = recapSessionState(ctx, session)
-    const nowEnd = nowState.lastTurnEnd
-    if (nowState.openTurn || nowEnd === null || nowEnd.seq !== anchor.seq || !nowEnd.completed) return
+    const nowAnchor = automaticAnchor(ctx, config, session)
+    if (nowAnchor === null || nowAnchor.seq !== anchor.seq) return
     if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
     publishRecap(ctx, store, session, text, anchor.seq)
     ctx.logger?.info?.('dsh-session-recap: generated recap for %s (turn/end seq %s)', session.id, anchor.seq)
@@ -951,11 +968,8 @@ export function apply(ctx: AppContext, config: Config): void {
     if (!visitedSessions.has(session.id) || !config.enabled || awaySince === undefined) return
     const epoch = awayEpoch
     if (!isAwayEpoch(epoch)) return
-    const state = recapSessionState(ctx, session)
-    if (state.openTurn || state.completedTurns < config.minTurns) return
-    const anchor = state.lastTurnEnd
-    if (anchor === null || !anchor.completed) return
-    if (currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
+    const anchor = automaticAnchor(ctx, config, session)
+    if (anchor === null || currentRecap(ctx, store, session)?.turnSeq === anchor.seq) return
     const dueAt = Math.max(anchor.time, awaySince) + config.idleMs
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, dueAt - Date.now()))
     const timer = setTimeout(() => {
@@ -1070,5 +1084,5 @@ export function apply(ctx: AppContext, config: Config): void {
     }
   }
 
-  ctx.logger?.info?.('[dsh-session-recap] mounted (awayMs=%s minTurns=%s maxChars=%s automatic=%s)', config.idleMs, config.minTurns, config.maxChars, config.enabled)
+  ctx.logger?.info?.('[dsh-session-recap] mounted (awayMs=%s minTurns=%s minConversationChars=%s maxChars=%s automatic=%s)', config.idleMs, config.minTurns, config.minConversationChars, config.maxChars, config.enabled)
 }

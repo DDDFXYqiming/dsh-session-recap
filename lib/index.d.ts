@@ -36,6 +36,8 @@ export interface Config {
     idleMs: number;
     /** Minimum completed turns before any automatic recap is generated. */
     minTurns: number;
+    /** Minimum non-whitespace characters in real user/assistant text before any automatic recap. */
+    minConversationChars: number;
     /** How many recent conversation messages (tool results excluded) feed the recap window. */
     recentMessages: number;
     /** Hard cap on the recap text length (characters). */

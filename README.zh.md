@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`@dsh-external/dsh-session-recap` 给 DeepSeek Harness 会话加上离开回顾。同一宿主的所有 Web 客户端都明确离开并持续达到 `idleMs`，且会话最后一个完成的回合也超过 `idleMs` 时，宿主调用一次辅助模型生成一段纯文本回顾，写入插件自己的数据文件。切回页面时，输入框上方显示这份回顾，内容包括当前任务、关键进展和下一步。`/recap` 可以随时手动生成；没有 Web 客户端的 profile 把 `hostCommand` 设为 `true` 后，同一个命令会直接返回正文。
+`@dsh-external/dsh-session-recap` 给 DeepSeek Harness 会话加上离开回顾。同一宿主的所有 Web 客户端都明确离开并持续达到 `idleMs`，会话最后一个完成的回合也超过 `idleMs`，且完成回合数与真实对话正文字符数分别达到 `minTurns` 和 `minConversationChars` 时，宿主调用一次辅助模型生成一段纯文本回顾，写入插件自己的数据文件。切回页面时，输入框上方显示这份回顾，内容包括当前任务、关键进展和下一步。`/recap` 可以随时手动生成；没有 Web 客户端的 profile 把 `hostCommand` 设为 `true` 后，同一个命令会直接返回正文。
 
 ## 目录
 
@@ -60,7 +60,7 @@ dsh plugin --profile web add .
 
 回到会话时，输入框上方的回顾卡片显示当前任务、最重要的进展和下一步。点 × 关闭。会话推进后卡片消失，每个会话只保留当前一份回顾。
 
-自动回顾面向访问过的交互会话。所有 WebUI 页面都明确离开并持续至少 `idleMs`，最后一个完成的回合距今也至少 `idleMs`，且会话累计完成过 `minTurns` 个回合后，才会生成回顾。任一 WebUI 页面重新聚焦都会取消等待中和生成中的自动回顾；在应用内切换会话时，整个应用仍视为活跃。开始新回合会取消该会话的生成并清掉上一份回顾。
+自动回顾面向访问过的交互会话。所有 WebUI 页面都明确离开并持续至少 `idleMs`，最后一个完成的回合距今也至少 `idleMs`，且会话累计完成过 `minTurns` 个回合、真实用户与助手正文累计至少 `minConversationChars` 个非空白字符后，才会生成回顾。工具结果与注入内容不计入正文字符数。任一 WebUI 页面重新聚焦都会取消等待中和生成中的自动回顾；在应用内切换会话时，整个应用仍视为活跃。开始新回合会取消该会话的生成并清掉上一份回顾。
 
 客户端每 20 秒发送心跳。活动心跳超过 45 秒未续上时，状态记为未知，自动回顾暂停，直到该客户端重新明确上报状态。
 
@@ -81,7 +81,8 @@ dsh plugin --profile web add .
     enabled: true           # 自动回顾开关。/recap 在关闭后仍可用。
     hostCommand: false      # 注册宿主 /recap 命令。没有 Web 客户端时才设为 true。
     idleMs: 180000          # 连续离开 WebUI 与最后回合结束均需达到的时长（毫秒）。
-    minTurns: 3             # 自动回顾所需的最少完成回合数。
+    minTurns: 5             # 自动回顾所需的最少完成回合数。
+    minConversationChars: 1000  # 真实用户与助手正文的最少非空白字符数，不含工具结果。
     recentMessages: 80      # 进入回顾窗口的最近消息条数。
     maxChars: 400           # 回顾正文的字符上限。
     maxInputChars: 24000    # 发给模型的输入字节上限。

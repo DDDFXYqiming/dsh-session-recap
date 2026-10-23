@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This bundle adds away recaps to a DeepSeek Harness session. When every Web client connected to the host has explicitly been away for at least `idleMs` and the last completed turn is also older than `idleMs`, the host asks an auxiliary model for a short plain-text recap and stores it in a plugin sidecar. The Web client shows that recap above the composer when the user returns, with the current task, the important progress, and the next action. `/recap` also generates one on demand, and `hostCommand: true` exposes the same command to profiles that have no Web client.
+This bundle adds away recaps to a DeepSeek Harness session. When every Web client connected to the host has explicitly been away for at least `idleMs`, the last completed turn is also older than `idleMs`, and the session reaches both `minTurns` and `minConversationChars`, the host asks an auxiliary model for a short plain-text recap and stores it in a plugin sidecar. The Web client shows that recap above the composer when the user returns, with the current task, the important progress, and the next action. `/recap` also generates one on demand, and `hostCommand: true` exposes the same command to profiles that have no Web client.
 
 ## Table of Contents
 
@@ -60,7 +60,7 @@ Apply the update through the plugin manager, then reload the page. Restart the h
 
 When you return to a session, a recap card above the composer shows the current task, the most important progress point, and the next action. The × button closes it. The card disappears when the session advances, and a session keeps one current recap.
 
-Automatic recaps cover interactive sessions you have visited. Every WebUI page must explicitly remain away for at least `idleMs`; the last completed turn must also be at least `idleMs` old, and the session must have at least `minTurns` completed turns. Focusing any WebUI page cancels scheduled and in-flight automatic recaps across all sessions. Switching sessions within the focused application keeps it active. Starting a new turn cancels that session's generation and clears its previous recap.
+Automatic recaps cover interactive sessions you have visited. Every WebUI page must explicitly remain away for at least `idleMs`; the last completed turn must also be at least `idleMs` old, the session must have at least `minTurns` completed turns, and real user/assistant text must contain at least `minConversationChars` non-whitespace characters. Tool results and injected content do not count. Focusing any WebUI page cancels scheduled and in-flight automatic recaps across all sessions. Switching sessions within the focused application keeps it active. Starting a new turn cancels that session's generation and clears its previous recap.
 
 Clients send a heartbeat every 20 seconds. An active client whose 45-second lease expires becomes unknown, and automatic recaps pause until that client reports an explicit state again.
 
@@ -81,7 +81,8 @@ The bundle default row needs no configuration. To change a value, add an entry f
     enabled: true           # Automatic recaps. /recap stays available when false.
     hostCommand: false      # Register the host /recap command. Set true only without a Web client.
     idleMs: 180000          # Required continuous app-away time and completed-turn age, in milliseconds.
-    minTurns: 3             # Completed turns required before an automatic recap.
+    minTurns: 5             # Completed turns required before an automatic recap.
+    minConversationChars: 1000  # Minimum non-whitespace characters in real user/assistant text.
     recentMessages: 80      # Recent conversation messages used for the recap.
     maxChars: 400           # Hard cap on the recap text, in characters.
     maxInputChars: 24000    # Byte cap on the transcript sent to the model.
