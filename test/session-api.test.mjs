@@ -256,7 +256,7 @@ async function appPresenceHarness(t, { hold = false } = {}) {
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous
   })
-  apply(ctx, Config({ provider: 'test-provider', model: 'test-model', idleMs: 1000, minTurns: 1 }))
+  apply(ctx, Config({ provider: 'test-provider', model: 'test-model', idleMs: 1000, minTurns: 1, minConversationChars: 1 }))
   const request = async (params, method = 'POST') => {
     const query = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) {
